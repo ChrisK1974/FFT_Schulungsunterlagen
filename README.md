@@ -32,38 +32,40 @@ Nach dieser 2-tägigen Schulung können die Teilnehmenden **unter Mentoring durc
 
 ## 📁 Inhalt dieses Repositories
 
-```
+```text
 FFT_Schulungsunterlagen/
 ├── README.md                                 # Diese Datei
 ├── HANDOVER.md                               # Umfassender Handover-Prompt
 │
 ├── 01_PRAESENTATION/
-│   └── FFT_Schulung_ESTW_L90_Pruefung.pptx # PowerPoint ~80-100 Folien
+│   └── FFT_Schulung_ESTW_L90_Pruefung.md     # Präsentationsstruktur (~80–100 Folien als Grundlage)
 │
 ├── 02_ARBEITSBLÄTTER/
-│   ├── 01_Lernzielkatalog.docx
-│   ├── 02_Sicherungsebene_Arbeitsblatt.docx
-│   ├── 03_Bedienoberfläche_Arbeitsblatt.docx
-│   ├── 04_Prüfprotokoll_Vorlage.xlsx
-│   ├── 05_JIRA_Prüfbuch_Anleitung.docx
-│   ├── 06_Fehlerbehandlung_Checkliste.xlsx
-│   ├── 07_Selbstreflexion_Checkpoint.docx
-│   └── 08_D-Cube_Grundlagen.docx
+│   ├── 01_Lernzielkatalog.md
+│   ├── 02_Sicherungsebene_Arbeitsblatt.md
+│   ├── 03_Bedienoberfläche_Arbeitsblatt.md
+│   ├── 04_Prüfprotokoll_Vorlage.md
+│   ├── 05_JIRA_Prüfbuch_Anleitung.md
+│   ├── 06_Fehlerbehandlung_Checkliste.md
+│   ├── 07_Selbstreflexion_Checkpoint.md
+│   └── 08_D-Cube_Grundlagen.md
 │
 ├── 03_HAUSAUFGABEN/
-│   ├── Hausaufgabe_Tag1_E-Learning.docx
-│   ├── Hausaufgabe_Tag2_Fallstudien.docx
-│   └── Loesungsluebersicht.docx
+│   ├── Hausaufgabe_Tag1_E-Learning.md
+│   ├── Hausaufgabe_Tag2_Fallstudien.md
+│   └── Loesungsuebersicht.md
 │
 ├── 04_REFERENZEN/
-│   ├── ESTW_L90_Glossar.docx
-│   ├── Checkliste_Softwareprüfung.xlsx
+│   ├── ESTW_L90_Glossar.md
+│   ├── Checkliste_Softwareprüfung.md
 │   └── FFT_Handbucher_Zusammenfassung.md
 │
 └── 05_MENTORING/
-    ├── Mentoringplan_Struktur.docx
-    └── Feedback_Formular.xlsx
+    ├── Mentoringplan_Struktur.md
+    └── Feedback_Formular.md
 ```
+
+> Hinweis: Einzelne originale Arbeitsdokumente und Prüfprotokolle liegen zusätzlich weiterhin in Office-Formaten (`.docx`, `.xlsx`) im Repository. Die oben aufgeführte Struktur beschreibt den aktuellen Schulungsstand der zentralen Unterlagen in Markdown.
 
 ---
 
@@ -100,7 +102,7 @@ Nach dieser Schulung können Teilnehmende:
 
 Diese Schulung basiert auf folgenden Thales-Unterlagen:
 
-1. **Differenzprüfung - GTS MLS Germany** - Pr��fumfang bei Umbauten
+1. **Differenzprüfung - GTS MLS Germany** - Prüfumfang bei Umbauten
 2. **Handhabung elektronische Ablage** - Archivierung
 3. **Handhabung JIRA-Prüfbücher** - Fehlerbehandlung (Schwerpunkt!)
 4. **Handhabung Prüfdokumentation** - Prüfablauf
@@ -233,7 +235,7 @@ Vor der ersten Schulung prüfen:
 
 ## 📅 Versionsverwaltung
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Erstellt:** Oktober 2026  
 **Gültig bis:** Oktober 2027  
 **Nächste Überprüfung:** Oktober 2027
