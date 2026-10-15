@@ -1,65 +1,80 @@
-# Hausaufgabe Tag 1: E-Learning & Sicherungsebene
+# Hausaufgabe Tag 1: E-Learning und Sicherungsebene
 
 ## Ziel
-Diese Hausaufgabe vertieft die Inhalte von **Tag 1** der Schulung. Schwerpunkt sind die Grundlagen des ESTW L90, die Sicherungsebene und insbesondere der Flankenschutz.
+Diese Hausaufgabe vertieft die Inhalte von **Tag 1** und bereitet die gemeinsame Anwendung an Tag 2 vor. Im Mittelpunkt stehen ESTW L90, die Prüfung projektierter Daten und der Flankenschutz.
+
+**Lernziele:** Sie können Anforderungen und Prüfnachweise zuordnen, sicherungstechnische Abhängigkeiten begründen und einen Befund mit Soll-/Ist-Vergleich beschreiben.
 
 **Bearbeitungszeit:** ca. 90 Minuten  
 **Abgabeform:** Schriftliche Bearbeitung der Fragen und kurze Zusammenfassung der Erkenntnisse
+
+**Material:** Schulungsnotizen, Arbeitsblatt „Sicherungsebene“ und [Glossar](../04_REFERENZEN/ESTW_L90_Glossar.md). Die Schulungsleitung benennt vorab ein geeignetes E-Learning-Angebot einschließlich relevanter Abschnitte. Falls keines bereitsteht, bearbeiten Sie Teil 1 anhand der Schulungsunterlagen und vermerken diese Ersatzgrundlage; ein bestimmter Kurs oder Link wird nicht vorausgesetzt.
+
+**Bearbeitungshinweise:** Planen Sie für die vier Teile etwa 20 / 25 / 35 / 10 Minuten ein; die Wiederholung bzw. das ausgewählte E-Learning ist darin enthalten. Geben Sie verwendete Quellen mit Stand oder Abschnitt an. Kennzeichnen Sie fehlende Informationen und Annahmen ausdrücklich. Es sind keine Eingriffe an einer realen Anlage erforderlich.
 
 ---
 
 ## Teil 1: Grundlagen wiederholen
 
 ### Aufgabe 1: ESTW L90 Grundverständnis
-Beantworte die folgenden Fragen in vollständigen Sätzen:
+Bearbeiten Sie die vereinbarte Lerneinheit bzw. die Ersatzunterlagen. Notieren Sie drei Kernaussagen und beantworten Sie die folgenden Fragen in vollständigen Sätzen:
 
 1. Was ist ein ESTW L90 und welche Hauptaufgabe erfüllt es im Bahnbetrieb?
-2. Welche Rolle spielt die projektiere Datenprüfung im Abnahmeprozess?
+2. Welche Rolle spielt die Prüfung projektierter Daten im Abnahmeprozess? Welche Verbindung besteht zwischen Anforderung, Projektierung und Prüfergebnis?
 3. Warum ist die korrekte Prüfung von Umbauten und Softwarewechseln sicherheitsrelevant?
-4. Welche Unterschiede bestehen zwischen einer funktionalen und einer sicherungstechnischen Prüfung?
+4. Welche Schwerpunkte haben funktionale und sicherungstechnische Prüffragen? Erläutern Sie an einem Beispiel, warum sie nicht voneinander unabhängig sind.
 
 ---
 
 ## Teil 2: Sicherungsebene analysieren
 
 ### Aufgabe 2: Flankenschutz verstehen
-Erläutere mit eigenen Worten:
+Erläutern Sie mit eigenen Worten und beziehen Sie sich auf die bereitgestellten Planunterlagen:
 
 1. Was bedeutet **Flankenschutz**?
-2. Warum ist Flankenschutz bei Fahrstraßen-Sperren und Wieder-Inbetriebnahmen besonders wichtig?
-3. Welche typischen Fehler können beim Flankenschutz auftreten?
-4. Welche Auswirkungen könnte eine fehlerhafte Flankenschutz-Konfiguration im realen Betrieb haben?
+2. Weshalb müssen bei Sperrung und Wiederinbetriebnahme einer Fahrstraße auch betroffene Sicherungsabhängigkeiten betrachtet werden?
+3. Welche Fehler sind beispielsweise bei der Zuordnung oder Berücksichtigung von Flankenschutzelementen denkbar?
+4. Welche Gefährdung könnte daraus entstehen, und welche zusätzlichen Angaben wären für eine belastbare Bewertung erforderlich?
 
 ---
 
 ## Teil 3: Szenario bearbeiten
 
 ### Aufgabe 3: Fallanalyse
-Bearbeite folgendes Szenario:
+Bearbeiten Sie das folgende vereinfachte Schulungsszenario:
 
-> In einem ESTW wird eine Fahrstraße im Rahmen einer geplanten Baumaßnahme gesperrt. Nach dem Umbau soll die Fahrstraße wieder in Betrieb genommen werden. Bei der Prüfung fällt auf, dass eine Nebenfahrstraße nicht korrekt berücksichtigt wurde.
+> Im ATZ wird die Wiederinbetriebnahme einer nach Umbau gesperrten Fahrstraße vorbereitet. Die bereitgestellte PT1-Unterlage fordert eine Schutzabhängigkeit zu einem benachbarten Fahrweg. Im Prüflauf lässt sich eine laut dieser Vorgabe auszuschließende Fahrbewegung dennoch anfordern. Ob die Anforderung tatsächlich zu einer unzulässigen Fahrstraßenbildung führt, ist noch nicht geprüft. Es besteht der Verdacht, dass der benachbarte Fahrweg, im Schulungsbeispiel „Nebenfahrstraße“ genannt, nicht vollständig berücksichtigt wurde.
 
-Beantworte dazu:
+Beantworten Sie dazu:
 
-1. Welche Prüfschritte würdest du durchführen?
-2. Wo würdest du nach Hinweisen auf den Fehler suchen?
-3. Warum ist die Nebenfahrstraße für den Flankenschutz relevant?
-4. Wie würdest du den Fehler in einem Prüfprotokoll dokumentieren?
+1. Welche Voraussetzungen und Unterlagen klären Sie zuerst, und welche weiteren Prüfschritte schlagen Sie unter Anleitung vor?
+2. Welche Nachweise helfen, zwischen Bedienanforderung, tatsächlicher Systemreaktion und möglicher Projektierungsabweichung zu unterscheiden?
+3. Warum ist der benachbarte Fahrweg in diesem Beispiel zu betrachten? Weshalb folgt daraus keine allgemeine Pflicht, jede benachbarte Fahrstraße zu sperren?
+4. Wie dokumentieren Sie den bisherigen Befund, ohne eine noch unbewiesene Ursache als Tatsache darzustellen?
+
+**Arbeitsergebnis:** Erstellen Sie einen kurzen Prüfplan und einen beispielhaften Befundeintrag.
+
+| Prüfschritt | Grundlage / Voraussetzung | Soll-Ergebnis | Benötigter Nachweis |
+|-------------|---------------------------|---------------|--------------------|
+| | | | |
+| | | | |
+
+Der Befundeintrag enthält mindestens Prüfobjekt, Anforderungsreferenz, Standangaben, Ausgangszustand, Bedienfolge, Soll-/Ist-Zustand und offene Fragen. Da das Szenario keine konkreten Objektkennungen oder Versionen vorgibt, kennzeichnen Sie diese als „nachzutragen“ statt Angaben zu erfinden. Bei ungeklärter Sicherheitswirkung benennen Sie die notwendige Unterbrechung und Abstimmung mit der Prüfverantwortung.
 
 ---
 
 ## Teil 4: Reflexion
 
 ### Aufgabe 4: Eigene Einschätzung
-Beantworte kurz:
+Beantworten Sie kurz:
 
-1. Welche Inhalte aus Tag 1 sind für dich noch unklar?
-2. Bei welchem Thema benötigst du im nächsten Schulungstag noch Unterstützung?
+1. Welche Inhalte aus Tag 1 sind für Sie noch unklar?
+2. Bei welchem Thema benötigen Sie am nächsten Schulungstag Unterstützung, und welche konkrete Frage möchten Sie klären?
 3. Warum ist es wichtig, sicherungstechnische Zusammenhänge nicht nur theoretisch, sondern auch anhand realer Szenarien zu verstehen?
 
 ---
 
 ## Abgabe
-Die Ergebnisse sollen vor Beginn von **Tag 2** vorliegen und als Grundlage für die gemeinsame Besprechung dienen.
+Die Ergebnisse sollen vor Beginn von **Tag 2** vorliegen; den Abgabeweg legt die Schulungsleitung fest. Bringen Sie Ihre Quellenangaben, den Prüfplan, den Befundeintrag und offene Fragen zur gemeinsamen Besprechung mit.
 
-**Hinweis:** Achte besonders auf klare Begründungen und die Verwendung der in der Schulung eingeführten Fachbegriffe.
+**Bewertungskriterien:** Fachlich korrekte Begriffe, nachvollziehbare Herleitung aus der Soll-Vorgabe, Trennung von Beobachtung und Hypothese sowie vollständige Kennzeichnung fehlender Angaben. Eine begründete offene Frage ist hilfreicher als eine unbelegte Sicherheitsbewertung.

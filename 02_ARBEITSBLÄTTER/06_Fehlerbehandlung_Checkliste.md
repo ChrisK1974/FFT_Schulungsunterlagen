@@ -1,17 +1,29 @@
-# Fehlerbehandlung Checkliste
+# Fehlerbehandlung: Checkliste
 
 ## Zweck
-Diese Checkliste unterstützt bei der strukturierten Bearbeitung von Fehlern, die während der Prüfung projektierter ESTW L90 Daten festgestellt werden.
+Diese Checkliste unterstützt die Aufnahme, Bewertung und Nachverfolgung von Abweichungen bei der Prüfung projektierter ESTW L90 Daten. Eine Beobachtung wird zunächst als Befund erfasst; die Ursache wird erst nach hinreichender Prüfung zugeordnet.
+
+**Lernziel:** Einen Befund so dokumentieren, dass eine andere prüfende Person ihn nachvollziehen, bewerten und gezielt nachprüfen kann.
+
+**Bearbeitungshinweis:** Die Checkliste je Befund verwenden. Nicht anwendbare Punkte mit Begründung kennzeichnen; offene Angaben als offen markieren und einer zuständigen Person zuordnen. Bei möglicher Sicherheitsrelevanz den betroffenen Prüfschritt unterbrechen, den Zustand dokumentieren und die zuständige Prüfverantwortung nach geltendem Verfahren einbeziehen. Keine eigenmächtigen Korrekturen oder Umgehungen vornehmen.
+
+| Zuordnung | Eintrag |
+|-----------|---------|
+| Projekt / Anlage / Bauzustand | |
+| Prüfschritt / Anforderungsreferenz | |
+| Prüfprotokoll / JIRA-Vorgang | |
+| Erfasst durch / Datum | |
 
 ---
 
 ## 1. Fehleraufnahme
-- [ ] Fehler eindeutig beschrieben
+- [ ] Befund eindeutig und ohne vorweggenommene Ursache beschrieben
 - [ ] Zeitpunkt der Feststellung dokumentiert
 - [ ] betroffene Funktion / Fahrstraße / Komponente benannt
-- [ ] Soll-Zustand beschrieben
+- [ ] Soll-Zustand mit prüfbarer Quellenreferenz und Dokumentenstand beschrieben
 - [ ] Ist-Zustand beschrieben
-- [ ] Rahmenbedingungen notiert (Version, Szenario, Betriebszustand)
+- [ ] Rahmenbedingungen notiert (Software-, Projektierungs- und Simulationsstand, Szenario, Betriebszustand)
+- [ ] Betroffene Objekte mit eindeutigen Kennungen und Ausgangszustand festgehalten
 
 ---
 
@@ -20,21 +32,25 @@ Diese Checkliste unterstützt bei der strukturierten Bearbeitung von Fehlern, di
 - [ ] Eingaben / Bedienhandlungen festgehalten
 - [ ] erwartetes Verhalten dokumentiert
 - [ ] tatsächliches Verhalten dokumentiert
-- [ ] Wiederholbarkeit geprüft
+- [ ] Wiederholbarkeit im zulässigen Prüfaufbau geprüft oder begründet, warum kein weiterer Versuch erfolgt ist
+- [ ] Belege dem Prüflauf zugeordnet (Zeitpunkt, Objektkennung, Logauszug oder Screenshot)
+- [ ] Bei nicht reproduzierbarem Befund die durchgeführten Versuche und verbleibenden Unsicherheiten dokumentiert
 
 ---
 
 ## 3. Bewertung
-- [ ] sicherheitsrelevante Auswirkungen betrachtet
-- [ ] betriebliche Auswirkungen bewertet
-- [ ] mögliche Ursache grob eingegrenzt
-- [ ] Priorität / Kritikalität festgelegt
+- [ ] Mögliche sicherheitsrelevante und betriebliche Auswirkungen beschrieben; Unsicherheiten ausdrücklich benannt
+- [ ] Betroffene Anforderungen, Schnittstellen und mögliche Rückwirkungen auf weitere Prüffälle betrachtet
+- [ ] Ursachenhypothesen von gesicherten Beobachtungen getrennt; Projektierung, Software, Simulation und Bedienung berücksichtigt
+- [ ] Vorläufige Kritikalität und Bearbeitungspriorität nach geltendem Verfahren begründet und mit zuständiger Prüfverantwortung abgestimmt
+- [ ] Notwendige Einschränkungen der weiteren Prüfung und Klärungsbedarf festgehalten
 
 ---
 
 ## 4. Dokumentation
 - [ ] Eintrag im Prüfprotokoll erstellt
 - [ ] Eintrag im JIRA-Prüfbuch angelegt
+- [ ] Prüfprotokoll und JIRA-Vorgang wechselseitig eindeutig referenziert
 - [ ] Screenshots / Log-Hinweise / Referenzen beigefügt
 - [ ] Formulierung sachlich und nachvollziehbar
 
@@ -43,10 +59,14 @@ Diese Checkliste unterstützt bei der strukturierten Bearbeitung von Fehlern, di
 ## 5. Weiterverfolgung
 - [ ] Verantwortlichkeit geklärt
 - [ ] Rückfragen an Projektierung / Entwicklung vorbereitet
-- [ ] Nachtest erforderlich bewertet
-- [ ] Status der Bearbeitung festgelegt
+- [ ] Bearbeitungsstatus, zuständige Person und nächster Klärungstermin festgehalten
+- [ ] Nachtest mit Soll-Ergebnis, korrigiertem Daten-/Softwarestand und erforderlichen Rückwirkungsprüfungen geplant
+- [ ] Nachtest durchgeführt und Ergebnis mit Belegen dokumentiert oder als offen gekennzeichnet
+- [ ] Abschluss erst nach nachgewiesener Verifikation und entsprechend den geltenden Zuständigkeiten dokumentiert
 
 ---
 
 ## Hinweis
-Diese Checkliste dient als Schulungs- und Arbeitshilfe. Je nach Prüfumfang und Unternehmensvorgaben kann eine erweiterte Dokumentation erforderlich sein.
+Diese Checkliste ist eine Schulungs- und Arbeitshilfe; maßgeblich bleiben die gültigen Verfahrens- und Arbeitsanweisungen. „Nicht reproduzierbar“ bedeutet nicht „behoben“. Ebenso ist eine Korrekturmeldung noch kein bestandener Nachtest. Freigaben und die Behandlung offener Befunde erfolgen ausschließlich nach dem geltenden Verfahren.
+
+**Qualitätsprüfung im Training:** Kann eine andere Person aus dem Eintrag Ausgangszustand, Soll-Ergebnis, Bedienfolge, beobachtete Abweichung und nächsten Bearbeitungsschritt eindeutig ableiten?
