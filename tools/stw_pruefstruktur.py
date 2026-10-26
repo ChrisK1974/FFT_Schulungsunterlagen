@@ -8,8 +8,11 @@ Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\M17525-01_AZ0180_Zweigleisigkeit
 - Region auswählen.
 - Betriebsstelle aus der Liste der vorhandenen Ordner der Region wählen
   oder ein neues RIL100-Kürzel eintippen.
-- Existiert der Ordner der Betriebsstelle bereits, wird er verwendet.
-  Sonst wird er als "<RIL100> - <Klarname>" angelegt.
+- Ordner, die nur aus dem RIL100-Kürzel bestehen (z. B. "BLN"), erscheinen
+  ebenfalls in der Liste. Wird ein Klarname eingegeben, wird der Ordner zu
+  "<RIL100> - <Klarname>" umbenannt (vervollständigt).
+- Existiert der Ordner der Betriebsstelle nicht, wird er als
+  "<RIL100> - <Klarname>" angelegt.
 - Kopiert optional einen Ordner der zentralen Ablage nach
   01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges>
 
@@ -78,10 +81,16 @@ VORLAGE = """
 PT1_PFAD = Path("01_Eingangsunterlagen", "PT1")
 PT1_UNTERORDNER = ["Stellwerk", "ZX", "sonstiges"]
 
+# Kennzeichnung in der Auswahlliste für Ordner ohne Klarnamen
+OHNE_KLARNAME = "  (Klarname fehlt)"
+
 PSP_MUSTER = re.compile(r"^[A-Z]\d{5}-\d{2}$")           # z. B. M17525-01
 AZ_MUSTER = re.compile(r"^\d{4}$")                       # z. B. 0180
 RIL_MUSTER = re.compile(r"^[A-ZÄÖÜ][A-ZÄÖÜ0-9 ]{1,4}$")  # z. B. BLN, BL, BLN F
-BST_ORDNER = re.compile(r"^\s*[A-Za-zÄÖÜäöü0-9 ]{1,6}?\s*-\s*\S")  # "<RIL> - <Name>"
+# Ordner "<RIL> - <Name>"
+BST_MIT_KLARNAME = re.compile(r"^\s*[A-Za-zÄÖÜäöü0-9 ]{1,6}?\s*-\s*\S")
+# Ordner nur "<RIL>" (1–5 Zeichen, beginnt mit Buchstabe)
+BST_NUR_RIL = re.compile(r"^[A-Za-zÄÖÜäöü][A-Za-zÄÖÜäöü0-9 ]{0,4}$")
 UNGUELTIG = re.compile(r'[<>:"/\\|?*]')
 
 
@@ -94,6 +103,19 @@ def bereinigen(name: str) -> str:
 def bereinigen_mit_leerzeichen(name: str) -> str:
     """Für Region/Betriebsstelle: Leerzeichen bleiben erhalten."""
     return UNGUELTIG.sub("_", name.strip())
+
+
+def hat_klarname(ordnername: str) -> bool:
+    return bool(BST_MIT_KLARNAME.match(ordnername))
+
+
+def ist_betriebsstelle(ordnername: str) -> bool:
+    return hat_klarname(ordnername) or bool(BST_NUR_RIL.match(ordnername.strip()))
+
+
+def ril_aus_ordner(ordnername: str) -> str:
+    teil = ordnername.split("-", 1)[0] if hat_klarname(ordnername) else ordnername
+    return " ".join(teil.upper().split())
 
 
 def vorlage_parsen(text: str):
@@ -121,26 +143,28 @@ def region_ordner(basis: Path, region_anzeige: str) -> Path:
 
 
 def betriebsstellen_auflisten(region: Path):
-    """Alle Unterordner der Region im Format '<RIL100> - <Klarname>'."""
+    """Alle Unterordner der Region, die wie eine Betriebsstelle aussehen."""
     try:
         if not region.is_dir():
             return []
         return sorted((d.name for d in region.iterdir()
-                       if d.is_dir() and BST_ORDNER.match(d.name)), key=str.casefold)
+                       if d.is_dir() and ist_betriebsstelle(d.name)), key=str.casefold)
     except OSError:
         return []
 
 
 def betriebsstelle_suchen(region: Path, ril: str):
-    """Liefert vorhandenen Ordner '<RIL100> - <Klarname>' oder None."""
+    """Vorhandenen Ordner zum RIL100-Kürzel suchen (mit Klarname bevorzugt) oder None."""
     try:
         if not region.is_dir():
             return None
-        muster = re.compile(r"^" + re.escape(ril) + r"\s*-", re.IGNORECASE)
-        treffer = [d for d in region.iterdir() if d.is_dir() and muster.match(d.name)]
+        treffer = [d for d in region.iterdir()
+                   if d.is_dir() and ist_betriebsstelle(d.name) and ril_aus_ordner(d.name) == ril]
     except OSError:
         return None
-    return sorted(treffer)[0] if treffer else None
+    if not treffer:
+        return None
+    return sorted(treffer, key=lambda d: (not hat_klarname(d.name), d.name.casefold()))[0]
 
 
 def ordner_kopieren(quelle: Path, ziel: Path, q: queue.Queue):
@@ -179,7 +203,7 @@ class App(tk.Tk):
         self.resizable(False, False)
         self.q = queue.Queue()
         self.wurzel = None
-        self.bst_liste = []
+        self.bst_map = {}      # Anzeigetext in der Liste -> echter Ordnername
 
         self.basis = tk.StringVar(value=STANDARD_BASIS)
         self.region = tk.StringVar(value=list(REGIONEN)[0])
@@ -217,8 +241,8 @@ class App(tk.Tk):
         ttk.Label(f, text="Aus Liste wählen oder neues RIL100-Kürzel eintippen (z. B. BLN).",
                   foreground="gray").grid(row=r, column=1, sticky="w", padx=5); r += 1
         self.klar_entry = ttk.Entry(f, textvariable=self.klarname, width=55)
-        zeile("Klarname (nur bei Neuanlage):", self.klar_entry)
-        self.bst_status = ttk.Label(f, foreground="gray")
+        zeile("Klarname (Neuanlage/Ergänzung):", self.klar_entry)
+        self.bst_status = ttk.Label(f, foreground="gray", wraplength=650, justify="left")
         self.bst_status.grid(row=r, column=0, columnspan=3, sticky="w"); r += 1
 
         # --- Projekt
@@ -247,6 +271,8 @@ class App(tk.Tk):
 
         # Regionwechsel -> Liste neu laden und Auswahl leeren
         self.region_box.bind("<<ComboboxSelected>>", lambda e: self.region_gewechselt())
+        # Neue Auswahl einer Betriebsstelle -> alten Klarnamen verwerfen
+        self.bst_box.bind("<<ComboboxSelected>>", lambda e: self.klarname.set(""))
         self.basis.trace_add("write", lambda *_: self.liste_aktualisieren())
         for v in (self.bst, self.klarname, self.psp, self.az, self.beschr):
             v.trace_add("write", lambda *_: self.vorschau_aktualisieren())
@@ -256,20 +282,28 @@ class App(tk.Tk):
     def region_pfad(self):
         return region_ordner(Path(self.basis.get()), self.region.get())
 
+    @staticmethod
+    def anzeige(name: str) -> str:
+        return name if hat_klarname(name) else name + OHNE_KLARNAME
+
+    def liste_einlesen(self):
+        namen = betriebsstellen_auflisten(self.region_pfad())
+        self.bst_map = {self.anzeige(n): n for n in namen}
+        return list(self.bst_map)
+
     def liste_aktualisieren(self):
-        self.bst_liste = betriebsstellen_auflisten(self.region_pfad())
-        self.bst_box.config(values=self.bst_liste)
+        self.bst_box.config(values=self.liste_einlesen())
         self.vorschau_aktualisieren()
 
     def liste_filtern(self):
         """Beim Aufklappen: Liste neu einlesen und nach Eingabe filtern."""
-        self.bst_liste = betriebsstellen_auflisten(self.region_pfad())
+        alle = self.liste_einlesen()
         text = self.bst.get().strip().casefold()
-        if text and text not in (n.casefold() for n in self.bst_liste):
-            gefiltert = [n for n in self.bst_liste if text in n.casefold()]
+        if text and text not in (n.casefold() for n in alle):
+            gefiltert = [n for n in alle if text in n.casefold()]
         else:
-            gefiltert = self.bst_liste
-        self.bst_box.config(values=gefiltert or self.bst_liste)
+            gefiltert = alle
+        self.bst_box.config(values=gefiltert or alle)
 
     def region_gewechselt(self):
         self.bst.set("")
@@ -278,8 +312,10 @@ class App(tk.Tk):
 
     # ------------------------------------------------ Hilfen
     def ril_wert(self):
-        """RIL100-Kürzel aus Auswahl ('BLN  - Lübbenau') oder Eingabe ('bln')."""
-        text = self.bst.get()
+        """RIL100-Kürzel aus Auswahl ('BLN  - Lübbenau', 'BLN (Klarname fehlt)') oder Eingabe ('bln')."""
+        text = self.bst.get().strip()
+        if text in self.bst_map:
+            return ril_aus_ordner(self.bst_map[text])
         if "-" in text:
             text = text.split("-", 1)[0]
         return " ".join(text.upper().split())
@@ -288,47 +324,69 @@ class App(tk.Tk):
         return bereinigen(f"{self.psp.get()}_AZ{self.az.get()}_{self.beschr.get()}")
 
     def betriebsstelle_ermitteln(self):
-        """-> (Pfad, existiert) oder (None, False) wenn Klarname fehlt."""
+        """
+        -> (Pfad, existiert, neuer_pfad)
+           neuer_pfad ist gesetzt, wenn ein vorhandener Ordner ohne Klarnamen
+           umbenannt (vervollständigt) werden soll. (None, False, None) wenn
+           für eine Neuanlage der Klarname fehlt.
+        """
         region = self.region_pfad()
         auswahl = self.bst.get().strip()
-        if auswahl and auswahl in self.bst_liste and (region / auswahl).is_dir():
-            return region / auswahl, True
         ril = self.ril_wert()
         if not ril:
-            return None, False
-        vorhanden = betriebsstelle_suchen(region, ril)
-        if vorhanden:
-            return vorhanden, True
+            return None, False, None
+
+        ordner = None
+        if auswahl in self.bst_map and (region / self.bst_map[auswahl]).is_dir():
+            ordner = region / self.bst_map[auswahl]
+        if ordner is None:
+            ordner = betriebsstelle_suchen(region, ril)
+
         klar = self.klarname.get().strip()
+        if ordner is not None:
+            if hat_klarname(ordner.name) or not klar:
+                return ordner, True, None
+            return ordner, True, region / bereinigen_mit_leerzeichen(f"{ril} - {klar}")
+
         if not klar and "-" in auswahl:
             klar = auswahl.split("-", 1)[1].strip()
         if not klar:
-            return None, False
-        return region / bereinigen_mit_leerzeichen(f"{ril} - {klar}"), False
+            return None, False, None
+        return region / bereinigen_mit_leerzeichen(f"{ril} - {klar}"), False, None
 
     def vorschau_aktualisieren(self):
         try:
-            bst, existiert = self.betriebsstelle_ermitteln()
+            bst, existiert, neu = self.betriebsstelle_ermitteln()
         except OSError:
-            bst, existiert = None, False
+            bst, existiert, neu = None, False, None
         if bst is None:
             if self.ril_wert():
                 txt = "Betriebsstelle nicht vorhanden – bitte Klarname für Neuanlage eingeben."
             else:
-                anz = len(self.bst_liste)
-                txt = (f"{anz} Betriebsstelle(n) in Region {self.region.get()} gefunden – "
+                txt = (f"{len(self.bst_map)} Betriebsstelle(n) in Region {self.region.get()} gefunden – "
                        "bitte auswählen oder RIL100-Kürzel eingeben.")
             self.bst_status.config(text=txt, foreground="darkorange")
             self.klar_entry.config(state="normal")
             self.vorschau.config(text="")
             return
-        if existiert:
+
+        ziel_bst = neu or bst
+        if existiert and neu:
+            self.bst_status.config(
+                text=f"✏ Wird vervollständigt: {bst.name}  →  {neu.name}", foreground="#1f5fbf")
+            self.klar_entry.config(state="normal")
+        elif existiert and not hat_klarname(bst.name):
+            self.bst_status.config(
+                text=f"✔ Vorhanden ohne Klarname: {bst}  – Klarname eingeben, um den Ordnernamen "
+                     "zu vervollständigen (optional).", foreground="darkgreen")
+            self.klar_entry.config(state="normal")
+        elif existiert:
             self.bst_status.config(text=f"✔ Vorhanden: {bst}", foreground="darkgreen")
             self.klar_entry.config(state="disabled")
         else:
             self.bst_status.config(text=f"➕ Wird neu angelegt: {bst}", foreground="darkorange")
             self.klar_entry.config(state="normal")
-        self.vorschau.config(text=f"Projektordner: {bst / self.projektordnername()}")
+        self.vorschau.config(text=f"Projektordner: {ziel_bst / self.projektordnername()}")
 
     def basis_waehlen(self):
         d = filedialog.askdirectory(initialdir=self.basis.get() or None)
@@ -350,11 +408,17 @@ class App(tk.Tk):
                                  "Bitte Betriebsstelle/RIL100-Kürzel, PSP-Element, Anlagenzustand und "
                                  "Projektbeschreibung ausfüllen.")
             return
-        bst, existiert = self.betriebsstelle_ermitteln()
+        bst, existiert, neu = self.betriebsstelle_ermitteln()
         if bst is None:
             messagebox.showerror("Fehlende Angaben",
                                  f"Für '{ril}' gibt es noch keinen Ordner.\n"
                                  "Bitte Klarname der Betriebsstelle eingeben.")
+            return
+        if neu is not None and neu.exists():
+            messagebox.showerror("Umbenennen nicht möglich",
+                                 f"Der Ordner existiert bereits:\n{neu}\n\n"
+                                 f"Bitte diesen Ordner in der Liste auswählen oder '{bst.name}' "
+                                 "manuell zusammenführen.")
             return
 
         warn = []
@@ -366,8 +430,23 @@ class App(tk.Tk):
             warn.append(f"Anlagenzustand '{az}' ist nicht 4-stellig numerisch.")
         if not existiert:
             warn.append(f"Betriebsstellenordner wird neu angelegt:\n{bst}")
+        if neu is not None:
+            warn.append(f"Betriebsstellenordner wird umbenannt:\n{bst.name}  →  {neu.name}")
         if warn and not messagebox.askyesno("Hinweis", "\n\n".join(warn) + "\n\nFortfahren?"):
             return
+
+        # Ordner ohne Klarnamen vervollständigen
+        if neu is not None:
+            try:
+                bst.rename(neu)
+            except OSError as e:
+                messagebox.showerror(
+                    "Umbenennen fehlgeschlagen",
+                    f"'{bst.name}' konnte nicht in '{neu.name}' umbenannt werden:\n{e}\n\n"
+                    "Ist eine Datei oder ein Explorer-Fenster in diesem Ordner geöffnet?")
+                return
+            bst = neu
+            self.klarname.set("")
 
         wurzel = bst / self.projektordnername()
         try:
@@ -390,10 +469,9 @@ class App(tk.Tk):
             return
 
         self.wurzel = wurzel
-        # Neu angelegte Betriebsstelle direkt in der Liste auswählen
+        # Neu angelegte/umbenannte Betriebsstelle direkt in der Liste auswählen
         self.liste_aktualisieren()
-        if bst.name in self.bst_liste:
-            self.bst.set(bst.name)
+        self.bst.set(self.anzeige(bst.name))
 
         quelle = self.pt1.get().strip()
         if not quelle:
