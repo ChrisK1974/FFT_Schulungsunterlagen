@@ -14,10 +14,13 @@ Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\0180_M17525-01_Zweigleisigkeit
 - Existiert der Ordner der Betriebsstelle nicht, wird er als
   "<RIL100> - <Klarname>" angelegt.
 - Automatische Vorauswahl der Quellordner:
-    PT1: nach Eingabe des PSP-Elements, z. B.
-         M17527-01 -> \\\\Thsdiza06fs01\\psp\\M17xxx\\M17527-01 Zweigleisigkeit Lübbenau-Cottbus
-    PT2: nach Wahl von Region und RIL100-Kürzel, z. B.
-         OST + BLN -> \\\\destgsfs10\\IL90-Projekte-ro\\OST\\BLN0
+    PT1: nach Eingabe des PSP-Elements (auch mit Buchstabenzusatz, z. B. M19061-01A).
+         Ist im Projektordner "001_PT1\\002_PT1 elektronisch" vorhanden, wird dieser gewählt:
+         M17527-01  -> \\\\Thsdiza06fs01\\psp\\M17xxx\\M17527-01 Zweigleisigkeit Lübbenau-Cottbus\\001_PT1\\002_PT1 elektronisch
+         M19061-01A -> \\\\Thsdiza06fs01\\psp\\M19xxx\\M19061-01A …\\001_PT1\\002_PT1 elektronisch
+                       (ersatzweise M19061-01 …, falls kein Ordner mit "A" existiert)
+    PT2: nach Wahl von Region und RIL100-Kürzel; es zählen nur die ersten 3 Stellen, z. B.
+         OST + BLN -> \\\\destgsfs10\\IL90-Projekte-ro\\OST\\BLN0  (oder BLNX, BLN1 …)
 - Kopiert optional je einen Ordner von den Ablagelaufwerken nach
   01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges> und
   01_Eingangsunterlagen/PT2/<Stellwerk|ZX>
@@ -60,8 +63,12 @@ KOPIERBEREICHE = {
 # PT1: Gruppenordner = erste 3 Zeichen der PSP + "xxx"  (M17527-01 -> M17xxx)
 PT1_GRUPPE_STELLEN = 3
 PT1_GRUPPE_SUFFIX = "xxx"
-# PT2: bevorzugter Ordner = RIL100-Kürzel + "0"  (BLN -> BLN0)
-PT2_STANDARD_SUFFIX = "0"
+# PT1: innerhalb des Projektordners direkt in diesen Unterordner springen (falls vorhanden)
+PT1_UNTERORDNER = Path("001_PT1", "002_PT1 elektronisch")
+# PT2: nur die ersten 3 Stellen des RIL100-Kürzels verwenden (BLN0, BLNX -> BLN)
+PT2_RIL_STELLEN = 3
+# PT2: bevorzugte 4. Stelle in dieser Reihenfolge (BLN0 vor BLNX vor Rest)
+PT2_BEVORZUGT = ["0", "X"]
 
 # Einrückung mit 2 Leerzeichen = Unterordner
 VORLAGE = """
@@ -101,7 +108,7 @@ VORLAGE = """
 # Kennzeichnung in der Auswahlliste für Ordner ohne Klarnamen
 OHNE_KLARNAME = "  (Klarname fehlt)"
 
-PSP_MUSTER = re.compile(r"^[A-Z]\d{5}-\d{2}$")           # z. B. M17525-01
+PSP_MUSTER = re.compile(r"^[A-Z]\d{5}-\d{2}[A-Z]?$")     # z. B. M17525-01, M19061-01A
 AZ_MUSTER = re.compile(r"^\d{4}$")                       # z. B. 0180
 RIL_MUSTER = re.compile(r"^[A-ZÄÖÜ][A-ZÄÖÜ0-9 ]{1,4}$")  # z. B. BLN, BL, BLN F
 # Ordner "<RIL> - <Name>"
@@ -198,21 +205,50 @@ def pt1_gruppenordner(psp: str) -> Path:
 def pt1_ordner_finden(psp: str):
     """
     Sucht auf dem PT1-Laufwerk den Projektordner zur PSP.
-    -> (Treffer, Fehlertext oder None). Treffer: Name beginnt mit der PSP,
-       gefolgt von Leerzeichen, '_', '-' oder Ende.
+    -> (Treffer, Fehlertext oder None).
+    - Treffer: Name beginnt mit der PSP, gefolgt von Leerzeichen, '_', '-' oder Ende.
+    - M19061-01A: erst exakt suchen, sonst ersatzweise nach M19061-01.
+    - Existiert <Projektordner>\\001_PT1\\002_PT1 elektronisch, wird dieser geliefert.
     """
+    psp = psp.strip().upper()
     gruppe = pt1_gruppenordner(psp)
-    muster = re.compile(r"^" + re.escape(psp) + r"(?:[\s_\-]|$)", re.IGNORECASE)
+    ohne_zusatz = re.sub(r"[A-Z]+$", "", psp)          # M19061-01A -> M19061-01
+    suchbegriffe = [psp] if ohne_zusatz == psp else [psp, ohne_zusatz]
     try:
         if not gruppe.is_dir():
             return [], f"Ordner nicht gefunden: {gruppe}"
-        treffer = sorted((d for d in gruppe.iterdir() if d.is_dir() and muster.match(d.name)),
-                         key=lambda d: d.name.casefold())
+        ordner = [d for d in gruppe.iterdir() if d.is_dir()]
+        treffer = []
+        for begriff in suchbegriffe:
+            muster = re.compile(r"^" + re.escape(begriff) + r"(?:[\s_\-]|$)", re.IGNORECASE)
+            treffer = sorted((d for d in ordner if muster.match(d.name)),
+                             key=lambda d: d.name.casefold())
+            if treffer:
+                break
+        if not treffer:
+            return [], f"Kein Ordner für {psp} in {gruppe} gefunden."
+        ergebnis = []
+        for d in treffer:
+            unter = d / PT1_UNTERORDNER
+            ergebnis.append(unter if unter.is_dir() else d)
     except OSError as e:
         return [], f"PT1-Laufwerk nicht lesbar: {e}"
-    if not treffer:
-        return [], f"Kein Ordner für {psp} in {gruppe} gefunden."
-    return treffer, None
+    return ergebnis, None
+
+
+def kurzpfad(kennung: str, pfad: Path) -> str:
+    """Pfad relativ zum Laufwerk anzeigen (M19xxx\\M19061-01A …\\001_PT1\\…)."""
+    try:
+        return str(pfad.relative_to(KOPIERBEREICHE[kennung][2]))
+    except ValueError:
+        return pfad.name
+
+
+def zielname(quelle: Path) -> str:
+    """Name des Zielordners: bei ...\\001_PT1\\002_PT1 elektronisch den Projektordnernamen nehmen."""
+    if len(quelle.parts) > 2 and quelle.parts[-2:] == PT1_UNTERORDNER.parts:
+        return quelle.parents[1].name
+    return quelle.name
 
 
 def pt2_regionsordner(region_anzeige: str) -> Path:
@@ -220,17 +256,23 @@ def pt2_regionsordner(region_anzeige: str) -> Path:
     return region_ordner(Path(KOPIERBEREICHE["PT2"][2]), region_anzeige)
 
 
+def pt2_kern(ril: str) -> str:
+    """Erste 3 Stellen des RIL100-Kürzels (ohne Leerzeichen)."""
+    return ril.replace(" ", "")[:PT2_RIL_STELLEN]
+
+
 def pt2_ordner_finden(region_anzeige: str, ril: str):
     """
     Sucht auf dem PT2-Laufwerk den Ordner zur Betriebsstelle.
-    -> (Treffer, Fehlertext oder None). Treffer: Name = RIL100-Kürzel, optional
-       gefolgt von Ziffern und/oder einem Zusatz (BLN0, BLN1, BLN0_alt …).
-       RIL100 + "0" (z. B. BLN0) steht an erster Stelle.
+    -> (Treffer, Fehlertext oder None).
+    Es zählen nur die ersten 3 Stellen des RIL100-Kürzels; danach sind 0/X/Ziffern
+    und ein Zusatz erlaubt (BLN, BLN0, BLNX, BLN1, BLN0_alt …).
+    Reihenfolge: BLN0, BLNX, dann alphabetisch.
     """
     region = pt2_regionsordner(region_anzeige)
-    kern = ril.replace(" ", "")
-    muster = re.compile(r"^" + re.escape(kern) + r"\d*(?:[\s_\-].*)?$", re.IGNORECASE)
-    bevorzugt = (kern + PT2_STANDARD_SUFFIX).casefold()
+    kern = pt2_kern(ril)
+    muster = re.compile(r"^" + re.escape(kern) + r"[0-9X]*(?:[\s_\-].*)?$", re.IGNORECASE)
+    rang = {(kern + s).casefold(): i for i, s in enumerate(PT2_BEVORZUGT)}
     try:
         if not region.is_dir():
             return [], f"Ordner nicht gefunden: {region}"
@@ -238,8 +280,8 @@ def pt2_ordner_finden(region_anzeige: str, ril: str):
     except OSError as e:
         return [], f"PT2-Laufwerk nicht lesbar: {e}"
     if not treffer:
-        return [], f"Kein Ordner für {ril} in {region} gefunden."
-    treffer.sort(key=lambda d: (d.name.casefold() != bevorzugt, d.name.casefold()))
+        return [], f"Kein Ordner für {kern} in {region} gefunden."
+    treffer.sort(key=lambda d: (rang.get(d.name.casefold(), len(rang)), d.name.casefold()))
     return treffer, None
 
 
@@ -398,7 +440,7 @@ class App(tk.Tk):
             if not ril:
                 return None, None
             return ((lambda: pt2_ordner_finden(region, ril)),
-                    f"Suche {ril} in {pt2_regionsordner(region)} …")
+                    f"Suche {pt2_kern(ril)}* in {pt2_regionsordner(region)} …")
         return None, None
 
     def suche_planen(self, kennung):
@@ -454,16 +496,17 @@ class App(tk.Tk):
             return
 
         gefunden = str(treffer[0])
+        anzeige = kurzpfad(kennung, treffer[0])
         zusatz = ""
         if len(treffer) > 1:
-            andere = ", ".join(d.name for d in treffer[1:4]) + (" …" if len(treffer) > 4 else "")
+            andere = ", ".join(kurzpfad(kennung, d) for d in treffer[1:4]) + (" …" if len(treffer) > 4 else "")
             zusatz = f"\nWeitere Treffer: {andere} – ggf. über „Durchsuchen…“ ändern."
         if automatisch:
             self.quellen[kennung].set(gefunden)
             self.auto_wert[kennung] = gefunden
-            hinweis.config(text=f"✔ Vorausgewählt: {treffer[0].name}{zusatz}", foreground="darkgreen")
+            hinweis.config(text=f"✔ Vorausgewählt: {anzeige}{zusatz}", foreground="darkgreen")
         else:
-            hinweis.config(text=f"Gefunden: {treffer[0].name} – manuelle Auswahl bleibt erhalten.{zusatz}",
+            hinweis.config(text=f"Gefunden: {anzeige} – manuelle Auswahl bleibt erhalten.{zusatz}",
                            foreground="#1f5fbf")
 
     # ------------------------------------------------ Betriebsstellen-Liste
@@ -637,8 +680,8 @@ class App(tk.Tk):
             warn.append(f"RIL100-Kürzel '{ril}' sieht ungewöhnlich aus (2–5 Zeichen erwartet).")
         if not AZ_MUSTER.match(az):
             warn.append(f"Anlagenzustand '{az}' ist nicht 4-stellig numerisch.")
-        if not PSP_MUSTER.match(psp):
-            warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01.")
+        if not PSP_MUSTER.match(psp.upper()):
+            warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01 bzw. M19061-01A.")
         if not existiert:
             warn.append(f"Betriebsstellenordner wird neu angelegt:\n{bst}")
         if neu is not None:
@@ -691,7 +734,7 @@ class App(tk.Tk):
             return
 
         auftraege = [
-            (k, q, wurzel / KOPIERBEREICHE[k][0] / self.unterziele[k].get() / q.name)
+            (k, q, wurzel / KOPIERBEREICHE[k][0] / self.unterziele[k].get() / zielname(q))
             for k, q in quellen.items()
         ]
         self.btn.config(state="disabled")
