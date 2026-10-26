@@ -13,7 +13,7 @@ Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\0180_M17525-01_Zweigleisigkeit
   "<RIL100> - <Klarname>" umbenannt (vervollständigt).
 - Existiert der Ordner der Betriebsstelle nicht, wird er als
   "<RIL100> - <Klarname>" angelegt.
-- Kopiert optional je einen Ordner der zentralen Ablage nach
+- Kopiert optional je einen Ordner von den Ablagelaufwerken nach
   01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges> und
   01_Eingangsunterlagen/PT2/<Stellwerk|ZX>
 
@@ -30,19 +30,26 @@ from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
 # ---------------------------------------------------------------- Einstellungen
-# Startordner des Auswahldialogs für PT1/PT2 (zentrales Ablagelaufwerk)
-ZENTRALE_ABLAGE = r"\\server\projekte"   # z. B. r"P:\Projekte"
 # Basisverzeichnis, unter dem die Regionen liegen
 STANDARD_BASIS = r"C:\Projekte"
 
 # Anzeigename -> Ordnername auf dem Laufwerk
 REGIONEN = {
-    "Ost": "OST",
-    "Südost": "SÜDOST",
-    "Süd": "SÜD",
-    "West": "WEST",
-    "Südwest": "SÜDWEST",
     "Nord": "NORD",
+    "Ost": "OST",
+    "Südost": "SUEDOST",
+    "Süd": "SUED",
+    "Südwest": "SUEDWEST",
+    "West": "WEST",
+}
+
+# Kopierbereiche: Kennung -> (Pfad im Projekt, mögliche Unterordner, Startordner des Auswahldialogs)
+# Hinweis: UNC-Pfade in r"..." ohne abschließenden Backslash angeben.
+KOPIERBEREICHE = {
+    "PT1": (Path("01_Eingangsunterlagen", "PT1"), ["Stellwerk", "ZX", "sonstiges"],
+            r"\\Thsdiza06fs01\psp"),
+    "PT2": (Path("01_Eingangsunterlagen", "PT2"), ["Stellwerk", "ZX"],
+            r"\\destgsfs10\IL90-Projekte-ro"),
 }
 
 # Einrückung mit 2 Leerzeichen = Unterordner
@@ -79,11 +86,6 @@ VORLAGE = """
   Freigabe
 99_Archiv
 """
-# Kopierbereiche: Kennung -> (Pfad im Projekt, mögliche Unterordner)
-KOPIERBEREICHE = {
-    "PT1": (Path("01_Eingangsunterlagen", "PT1"), ["Stellwerk", "ZX", "sonstiges"]),
-    "PT2": (Path("01_Eingangsunterlagen", "PT2"), ["Stellwerk", "ZX"]),
-}
 
 # Kennzeichnung in der Auswahlliste für Ordner ohne Klarnamen
 OHNE_KLARNAME = "  (Klarname fehlt)"
@@ -217,7 +219,7 @@ class App(tk.Tk):
         self.bst_map = {}      # Anzeigetext in der Liste -> echter Ordnername
 
         self.basis = tk.StringVar(value=STANDARD_BASIS)
-        self.region = tk.StringVar(value=list(REGIONEN)[0])
+        self.region = tk.StringVar(value="Ost")
         self.bst = tk.StringVar()          # Auswahl aus Liste ODER getipptes RIL100-Kürzel
         self.klarname = tk.StringVar()
         self.psp = tk.StringVar()
@@ -270,9 +272,9 @@ class App(tk.Tk):
         zeile("Projektbeschreibung:", ttk.Entry(f, textvariable=self.beschr, width=55))
 
         # --- PT1 / PT2
-        for kennung, (_, unterordner) in KOPIERBEREICHE.items():
-            ueberschrift(f"{kennung}-Unterlagen")
-            zeile(f"{kennung} von zentraler Ablage (optional):",
+        for kennung, (_, unterordner, start) in KOPIERBEREICHE.items():
+            ueberschrift(f"{kennung}-Unterlagen  ({start})")
+            zeile(f"{kennung}-Quellordner (optional):",
                   ttk.Entry(f, textvariable=self.quellen[kennung], width=55),
                   ttk.Button(f, text="Durchsuchen…",
                              command=lambda k=kennung: self.quelle_waehlen(k)))
@@ -291,9 +293,7 @@ class App(tk.Tk):
         self.btn = ttk.Button(f, text="Struktur anlegen", command=self.anlegen)
         self.btn.grid(row=r, column=2, pady=(10, 0), sticky="e")
 
-        # Regionwechsel -> Liste neu laden und Auswahl leeren
         self.region_box.bind("<<ComboboxSelected>>", lambda e: self.region_gewechselt())
-        # Neue Auswahl einer Betriebsstelle -> alten Klarnamen verwerfen
         self.bst_box.bind("<<ComboboxSelected>>", lambda e: self.klarname.set(""))
         self.basis.trace_add("write", lambda *_: self.liste_aktualisieren())
         for v in (self.bst, self.klarname, self.psp, self.az, self.beschr):
@@ -334,7 +334,6 @@ class App(tk.Tk):
 
     # ------------------------------------------------ Hilfen
     def ril_wert(self):
-        """RIL100-Kürzel aus Auswahl ('BLN  - Lübbenau', 'BLN (Klarname fehlt)') oder Eingabe ('bln')."""
         text = self.bst.get().strip()
         if text in self.bst_map:
             return ril_aus_ordner(self.bst_map[text])
@@ -348,12 +347,7 @@ class App(tk.Tk):
         return bereinigen("_".join(t for t in teile if t))
 
     def betriebsstelle_ermitteln(self):
-        """
-        -> (Pfad, existiert, neuer_pfad)
-           neuer_pfad ist gesetzt, wenn ein vorhandener Ordner ohne Klarnamen
-           umbenannt (vervollständigt) werden soll. (None, False, None) wenn
-           für eine Neuanlage der Klarname fehlt.
-        """
+        """-> (Pfad, existiert, neuer_pfad); (None, False, None) wenn Klarname für Neuanlage fehlt."""
         region = self.region_pfad()
         auswahl = self.bst.get().strip()
         ril = self.ril_wert()
@@ -387,7 +381,7 @@ class App(tk.Tk):
             if self.ril_wert():
                 txt = "Betriebsstelle nicht vorhanden – bitte Klarname für Neuanlage eingeben."
             else:
-                txt = (f"{len(self.bst_map)} Betriebsstelle(n) in Region {self.region.get()} gefunden – "
+                txt = (f"{len(self.bst_map)} Betriebsstelle(n) in {self.region_pfad()} gefunden – "
                        "bitte auswählen oder RIL100-Kürzel eingeben.")
             self.bst_status.config(text=txt, foreground="darkorange")
             self.klar_entry.config(state="normal")
@@ -418,11 +412,18 @@ class App(tk.Tk):
             self.basis.set(str(Path(d)))
 
     def quelle_waehlen(self, kennung):
-        start = ZENTRALE_ABLAGE if Path(ZENTRALE_ABLAGE).exists() else None
+        start = KOPIERBEREICHE[kennung][2]
+        if not Path(start).exists():
+            messagebox.showwarning(
+                "Laufwerk nicht erreichbar",
+                f"{kennung}-Laufwerk ist nicht erreichbar:\n{start}\n\n"
+                "VPN/Netzwerkverbindung und Berechtigung prüfen. "
+                "Der Auswahldialog öffnet sich trotzdem.")
+            start = None
         d = filedialog.askdirectory(initialdir=start,
-                                    title=f"{kennung}-Ordner auf zentraler Ablage wählen")
+                                    title=f"{kennung}-Ordner wählen")
         if d:
-            self.quellen[kennung].set(d)
+            self.quellen[kennung].set(str(Path(d)))
 
     # ------------------------------------------------ Anlegen
     def anlegen(self):
@@ -446,7 +447,6 @@ class App(tk.Tk):
                                  "manuell zusammenführen.")
             return
 
-        # Kopierquellen prüfen
         quellen = {}
         for kennung in KOPIERBEREICHE:
             q = self.quellen[kennung].get().strip()
@@ -471,7 +471,6 @@ class App(tk.Tk):
         if warn and not messagebox.askyesno("Hinweis", "\n\n".join(warn) + "\n\nFortfahren?"):
             return
 
-        # Ordner ohne Klarnamen vervollständigen
         if neu is not None:
             try:
                 bst.rename(neu)
@@ -506,7 +505,6 @@ class App(tk.Tk):
             return
 
         self.wurzel = wurzel
-        # Neu angelegte/umbenannte Betriebsstelle direkt in der Liste auswählen
         self.liste_aktualisieren()
         self.bst.set(self.anzeige(bst.name))
 
