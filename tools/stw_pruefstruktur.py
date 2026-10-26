@@ -2,8 +2,13 @@
 """
 Prüfstruktur für Stellwerksprojekte anlegen (mit grafischer Oberfläche).
 
-- Eingaben: PSP-Element, Anlagenzustand, Projektbeschreibung
-- Legt die Verzeichnisstruktur nach VORLAGE an
+Ablage:  <Basis>\\<Region>\\<RIL100> - <Klarname>\\<PSP>_AZ<Anlagenzustand>_<Beschreibung>
+Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\M17525-01_AZ0180_Zweigleisigkeit
+
+- Region und RIL100-Kürzel werden eingegeben.
+- Existiert der Ordner der Betriebsstelle bereits (Ordnername beginnt mit
+  dem RIL100-Kürzel gefolgt von "-"), wird er verwendet. Sonst wird er als
+  "<RIL100> - <Klarname>" angelegt.
 - Kopiert optional einen Ordner der zentralen Ablage nach
   01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges>
 
@@ -22,8 +27,18 @@ from tkinter import ttk, filedialog, messagebox
 # ---------------------------------------------------------------- Einstellungen
 # Startordner des Auswahldialogs für PT1 (zentrales Ablagelaufwerk)
 ZENTRALE_ABLAGE = r"\\server\projekte"   # z. B. r"P:\Projekte"
-# Standard-Zielordner für die Projektverzeichnisse
-STANDARD_ZIEL = str(Path.home() / "Pruefungen")
+# Basisverzeichnis, unter dem die Regionen liegen
+STANDARD_BASIS = r"C:\Projekte"
+
+# Anzeigename -> Ordnername auf dem Laufwerk
+REGIONEN = {
+    "Ost": "OST",
+    "Südost": "SÜDOST",
+    "Süd": "SÜD",
+    "West": "WEST",
+    "Südwest": "SÜDWEST",
+    "Nord": "NORD",
+}
 
 # Einrückung mit 2 Leerzeichen = Unterordner
 VORLAGE = """
@@ -62,14 +77,21 @@ VORLAGE = """
 PT1_PFAD = Path("01_Eingangsunterlagen", "PT1")
 PT1_UNTERORDNER = ["Stellwerk", "ZX", "sonstiges"]
 
-PSP_MUSTER = re.compile(r"^[A-Z]\d{5}-\d{2}$")   # z. B. M17525-01
-AZ_MUSTER = re.compile(r"^\d{4}$")               # z. B. 0180
+PSP_MUSTER = re.compile(r"^[A-Z]\d{5}-\d{2}$")       # z. B. M17525-01
+AZ_MUSTER = re.compile(r"^\d{4}$")                   # z. B. 0180
+RIL_MUSTER = re.compile(r"^[A-ZÄÖÜ][A-ZÄÖÜ0-9 ]{1,4}$")  # z. B. BLN, BL, FF, BLN F
 UNGUELTIG = re.compile(r'[<>:"/\\|?*]')
 
 
 # ---------------------------------------------------------------- Logik
 def bereinigen(name: str) -> str:
+    """Für Projekt- und Strukturordner: ungültige Zeichen und Leerzeichen -> _"""
     return UNGUELTIG.sub("_", name.strip()).replace(" ", "_")
+
+
+def bereinigen_mit_leerzeichen(name: str) -> str:
+    """Für Region/Betriebsstelle: Leerzeichen bleiben erhalten."""
+    return UNGUELTIG.sub("_", name.strip())
 
 
 def vorlage_parsen(text: str):
@@ -81,6 +103,25 @@ def vorlage_parsen(text: str):
         stapel = stapel[:tiefe] + [bereinigen(zeile)]
         pfade.append(Path(*stapel))
     return pfade
+
+
+def region_ordner(basis: Path, region_anzeige: str) -> Path:
+    """Sucht den Regionsordner (Groß-/Kleinschreibung egal), sonst Standardname."""
+    soll = REGIONEN.get(region_anzeige, region_anzeige)
+    if basis.is_dir():
+        for d in basis.iterdir():
+            if d.is_dir() and d.name.casefold() in (soll.casefold(), region_anzeige.casefold()):
+                return d
+    return basis / bereinigen_mit_leerzeichen(soll)
+
+
+def betriebsstelle_suchen(region: Path, ril: str):
+    """Liefert vorhandenen Ordner '<RIL100> - <Klarname>' oder None."""
+    if not region.is_dir():
+        return None
+    muster = re.compile(r"^" + re.escape(ril) + r"\s*-", re.IGNORECASE)
+    treffer = [d for d in region.iterdir() if d.is_dir() and muster.match(d.name)]
+    return sorted(treffer)[0] if treffer else None
 
 
 def ordner_kopieren(quelle: Path, ziel: Path, q: queue.Queue):
@@ -120,56 +161,128 @@ class App(tk.Tk):
         self.q = queue.Queue()
         self.wurzel = None
 
+        self.basis = tk.StringVar(value=STANDARD_BASIS)
+        self.region = tk.StringVar(value=list(REGIONEN)[0])
+        self.ril = tk.StringVar()
+        self.klarname = tk.StringVar()
         self.psp = tk.StringVar()
         self.az = tk.StringVar()
         self.beschr = tk.StringVar()
-        self.ziel = tk.StringVar(value=STANDARD_ZIEL)
         self.pt1 = tk.StringVar()
         self.pt1_ziel = tk.StringVar(value=PT1_UNTERORDNER[0])
 
         f = ttk.Frame(self, padding=12)
         f.grid()
-        zeilen = [
-            ("PSP-Element (z. B. M17525-01):", self.psp, None),
-            ("Anlagenzustand (z. B. 0180):", self.az, None),
-            ("Projektbeschreibung:", self.beschr, None),
-            ("Zielverzeichnis:", self.ziel, self.ziel_waehlen),
-            ("PT1 von zentraler Ablage (optional):", self.pt1, self.pt1_waehlen),
-        ]
-        for r, (text, var, cmd) in enumerate(zeilen):
+        r = 0
+
+        def zeile(text, widget, button=None):
+            nonlocal r
             ttk.Label(f, text=text).grid(row=r, column=0, sticky="w", pady=3)
-            ttk.Entry(f, textvariable=var, width=55).grid(row=r, column=1, padx=5)
-            if cmd:
-                ttk.Button(f, text="Durchsuchen…", command=cmd).grid(row=r, column=2)
+            widget.grid(row=r, column=1, padx=5, sticky="w")
+            if button:
+                button.grid(row=r, column=2, sticky="we")
+            r += 1
 
-        ttk.Label(f, text="PT1 kopieren nach:").grid(row=5, column=0, sticky="w", pady=3)
-        ttk.Combobox(f, textvariable=self.pt1_ziel, values=PT1_UNTERORDNER,
-                     state="readonly", width=20).grid(row=5, column=1, sticky="w", padx=5)
+        # --- Ablageort
+        ttk.Label(f, text="Ablageort", font=("", 10, "bold")).grid(row=r, column=0, sticky="w"); r += 1
+        zeile("Basisverzeichnis:", ttk.Entry(f, textvariable=self.basis, width=55),
+              ttk.Button(f, text="Durchsuchen…", command=self.basis_waehlen))
+        zeile("Region:", ttk.Combobox(f, textvariable=self.region, values=list(REGIONEN),
+                                      state="readonly", width=20))
+        zeile("RIL100-Kürzel (z. B. BLN):", ttk.Entry(f, textvariable=self.ril, width=20),
+              ttk.Button(f, text="Prüfen", command=self.betriebsstelle_pruefen))
+        self.klar_entry = ttk.Entry(f, textvariable=self.klarname, width=55)
+        zeile("Klarname (nur bei Neuanlage):", self.klar_entry)
+        self.bst_status = ttk.Label(f, foreground="gray")
+        self.bst_status.grid(row=r, column=0, columnspan=3, sticky="w"); r += 1
 
-        self.vorschau = ttk.Label(f, foreground="gray")
-        self.vorschau.grid(row=6, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        for v in (self.psp, self.az, self.beschr):
-            v.trace_add("write", lambda *_: self.vorschau_aktualisieren())
+        # --- Projekt
+        ttk.Label(f, text="Projekt", font=("", 10, "bold")).grid(row=r, column=0, sticky="w", pady=(8, 0)); r += 1
+        zeile("PSP-Element (z. B. M17525-01):", ttk.Entry(f, textvariable=self.psp, width=55))
+        zeile("Anlagenzustand (z. B. 0180):", ttk.Entry(f, textvariable=self.az, width=55))
+        zeile("Projektbeschreibung:", ttk.Entry(f, textvariable=self.beschr, width=55))
+
+        # --- PT1
+        ttk.Label(f, text="PT1-Unterlagen", font=("", 10, "bold")).grid(row=r, column=0, sticky="w", pady=(8, 0)); r += 1
+        zeile("PT1 von zentraler Ablage (optional):", ttk.Entry(f, textvariable=self.pt1, width=55),
+              ttk.Button(f, text="Durchsuchen…", command=self.pt1_waehlen))
+        zeile("PT1 kopieren nach:", ttk.Combobox(f, textvariable=self.pt1_ziel, values=PT1_UNTERORDNER,
+                                                 state="readonly", width=20))
+
+        self.vorschau = ttk.Label(f, foreground="gray", wraplength=650, justify="left")
+        self.vorschau.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0)); r += 1
 
         self.balken = ttk.Progressbar(f, length=500)
-        self.balken.grid(row=7, column=0, columnspan=3, pady=8, sticky="we")
+        self.balken.grid(row=r, column=0, columnspan=3, pady=8, sticky="we"); r += 1
         self.status = ttk.Label(f, text="Bereit.")
-        self.status.grid(row=8, column=0, columnspan=3, sticky="w")
+        self.status.grid(row=r, column=0, columnspan=3, sticky="w"); r += 1
 
         self.btn = ttk.Button(f, text="Struktur anlegen", command=self.anlegen)
-        self.btn.grid(row=9, column=2, pady=(10, 0), sticky="e")
+        self.btn.grid(row=r, column=2, pady=(10, 0), sticky="e")
+
+        for v in (self.basis, self.region, self.ril, self.klarname, self.psp, self.az, self.beschr):
+            v.trace_add("write", lambda *_: self.vorschau_aktualisieren())
         self.vorschau_aktualisieren()
 
-    def ordnername(self):
+    # ------------------------------------------------ Hilfen
+    def ril_wert(self):
+        return " ".join(self.ril.get().upper().split())
+
+    def projektordnername(self):
         return bereinigen(f"{self.psp.get()}_AZ{self.az.get()}_{self.beschr.get()}")
 
-    def vorschau_aktualisieren(self):
-        self.vorschau.config(text=f"Projektordner: {self.ordnername()}")
+    def betriebsstelle_ermitteln(self):
+        """-> (Pfad, existiert) oder (None, False) wenn Klarname fehlt."""
+        region = region_ordner(Path(self.basis.get()), self.region.get())
+        ril = self.ril_wert()
+        if not ril:
+            return None, False
+        vorhanden = betriebsstelle_suchen(region, ril)
+        if vorhanden:
+            return vorhanden, True
+        klar = self.klarname.get().strip()
+        if not klar:
+            return None, False
+        return region / bereinigen_mit_leerzeichen(f"{ril} - {klar}"), False
 
-    def ziel_waehlen(self):
-        d = filedialog.askdirectory(initialdir=self.ziel.get() or None)
+    def vorschau_aktualisieren(self):
+        try:
+            bst, existiert = self.betriebsstelle_ermitteln()
+        except OSError:
+            bst, existiert = None, False
+        if bst is None:
+            if self.ril_wert():
+                txt = "Betriebsstelle nicht vorhanden – bitte Klarname für Neuanlage eingeben."
+            else:
+                txt = "Bitte RIL100-Kürzel eingeben."
+            self.bst_status.config(text=txt, foreground="darkorange")
+            self.klar_entry.config(state="normal")
+            self.vorschau.config(text="")
+            return
+        if existiert:
+            self.bst_status.config(text=f"✔ Vorhanden: {bst}", foreground="darkgreen")
+            self.klar_entry.config(state="disabled")
+        else:
+            self.bst_status.config(text=f"➕ Wird neu angelegt: {bst}", foreground="darkorange")
+            self.klar_entry.config(state="normal")
+        self.vorschau.config(text=f"Projektordner: {bst / self.projektordnername()}")
+
+    def betriebsstelle_pruefen(self):
+        self.vorschau_aktualisieren()
+        bst, existiert = self.betriebsstelle_ermitteln()
+        if bst and existiert:
+            messagebox.showinfo("Betriebsstelle", f"Ordner vorhanden:\n{bst}")
+        elif bst:
+            messagebox.showinfo("Betriebsstelle", f"Ordner existiert noch nicht und wird angelegt:\n{bst}")
+        else:
+            messagebox.showwarning("Betriebsstelle",
+                                   "Kein Ordner für dieses RIL100-Kürzel gefunden.\n"
+                                   "Bitte Klarname eingeben, damit er angelegt werden kann.")
+
+    def basis_waehlen(self):
+        d = filedialog.askdirectory(initialdir=self.basis.get() or None)
         if d:
-            self.ziel.set(d)
+            self.basis.set(str(Path(d)))
 
     def pt1_waehlen(self):
         start = ZENTRALE_ABLAGE if Path(ZENTRALE_ABLAGE).exists() else None
@@ -177,27 +290,43 @@ class App(tk.Tk):
         if d:
             self.pt1.set(d)
 
+    # ------------------------------------------------ Anlegen
     def anlegen(self):
         psp, az, beschr = self.psp.get().strip(), self.az.get().strip(), self.beschr.get().strip()
-        if not (psp and az and beschr):
+        ril = self.ril_wert()
+        if not (ril and psp and az and beschr):
             messagebox.showerror("Fehlende Angaben",
-                                 "Bitte PSP-Element, Anlagenzustand und Projektbeschreibung ausfüllen.")
+                                 "Bitte RIL100-Kürzel, PSP-Element, Anlagenzustand und "
+                                 "Projektbeschreibung ausfüllen.")
             return
+        bst, existiert = self.betriebsstelle_ermitteln()
+        if bst is None:
+            messagebox.showerror("Fehlende Angaben",
+                                 f"Für '{ril}' gibt es noch keinen Ordner.\n"
+                                 "Bitte Klarname der Betriebsstelle eingeben.")
+            return
+
         warn = []
+        if not RIL_MUSTER.match(ril):
+            warn.append(f"RIL100-Kürzel '{ril}' sieht ungewöhnlich aus (2–5 Zeichen erwartet).")
         if not PSP_MUSTER.match(psp):
             warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01.")
         if not AZ_MUSTER.match(az):
             warn.append(f"Anlagenzustand '{az}' ist nicht 4-stellig numerisch.")
-        if warn and not messagebox.askyesno("Hinweis", "\n".join(warn) + "\n\nTrotzdem fortfahren?"):
+        if not existiert:
+            warn.append(f"Betriebsstellenordner wird neu angelegt:\n{bst}")
+        if warn and not messagebox.askyesno("Hinweis", "\n\n".join(warn) + "\n\nFortfahren?"):
             return
 
-        wurzel = Path(self.ziel.get()) / self.ordnername()
+        wurzel = bst / self.projektordnername()
         try:
             for p in vorlage_parsen(VORLAGE):
                 (wurzel / p).mkdir(parents=True, exist_ok=True)
             info = wurzel / "Projektinfo.txt"
             if not info.exists():
                 info.write_text(
+                    f"Region:              {self.region.get()}\n"
+                    f"Betriebsstelle:      {bst.name}\n"
                     f"PSP-Element:         {psp}\n"
                     f"Anlagenzustand:      {az}\n"
                     f"Projektbeschreibung: {beschr}\n"
@@ -210,6 +339,7 @@ class App(tk.Tk):
             return
 
         self.wurzel = wurzel
+        self.vorschau_aktualisieren()
         quelle = self.pt1.get().strip()
         if not quelle:
             self.status.config(text=f"Struktur angelegt: {wurzel}")
