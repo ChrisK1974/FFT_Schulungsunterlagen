@@ -13,6 +13,11 @@ Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\0180_M17525-01_Zweigleisigkeit
   "<RIL100> - <Klarname>" umbenannt (vervollständigt).
 - Existiert der Ordner der Betriebsstelle nicht, wird er als
   "<RIL100> - <Klarname>" angelegt.
+- Automatische Vorauswahl der Quellordner:
+    PT1: nach Eingabe des PSP-Elements, z. B.
+         M17527-01 -> \\\\Thsdiza06fs01\\psp\\M17xxx\\M17527-01 Zweigleisigkeit Lübbenau-Cottbus
+    PT2: nach Wahl von Region und RIL100-Kürzel, z. B.
+         OST + BLN -> \\\\destgsfs10\\IL90-Projekte-ro\\OST\\BLN0
 - Kopiert optional je einen Ordner von den Ablagelaufwerken nach
   01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges> und
   01_Eingangsunterlagen/PT2/<Stellwerk|ZX>
@@ -33,7 +38,7 @@ from tkinter import ttk, filedialog, messagebox
 # Basisverzeichnis, unter dem die Regionen liegen
 STANDARD_BASIS = r"C:\Projekte"
 
-# Anzeigename -> Ordnername auf dem Laufwerk
+# Anzeigename -> Ordnername auf dem Laufwerk (gilt auch für das PT2-Laufwerk)
 REGIONEN = {
     "Nord": "NORD",
     "Ost": "OST",
@@ -43,7 +48,7 @@ REGIONEN = {
     "West": "WEST",
 }
 
-# Kopierbereiche: Kennung -> (Pfad im Projekt, mögliche Unterordner, Startordner des Auswahldialogs)
+# Kopierbereiche: Kennung -> (Pfad im Projekt, mögliche Unterordner, Laufwerk/Startordner)
 # Hinweis: UNC-Pfade in r"..." ohne abschließenden Backslash angeben.
 KOPIERBEREICHE = {
     "PT1": (Path("01_Eingangsunterlagen", "PT1"), ["Stellwerk", "ZX", "sonstiges"],
@@ -51,6 +56,12 @@ KOPIERBEREICHE = {
     "PT2": (Path("01_Eingangsunterlagen", "PT2"), ["Stellwerk", "ZX"],
             r"\\destgsfs10\IL90-Projekte-ro"),
 }
+
+# PT1: Gruppenordner = erste 3 Zeichen der PSP + "xxx"  (M17527-01 -> M17xxx)
+PT1_GRUPPE_STELLEN = 3
+PT1_GRUPPE_SUFFIX = "xxx"
+# PT2: bevorzugter Ordner = RIL100-Kürzel + "0"  (BLN -> BLN0)
+PT2_STANDARD_SUFFIX = "0"
 
 # Einrückung mit 2 Leerzeichen = Unterordner
 VORLAGE = """
@@ -98,6 +109,11 @@ BST_MIT_KLARNAME = re.compile(r"^\s*[A-Za-zÄÖÜäöü0-9 ]{1,6}?\s*-\s*\S")
 # Ordner nur "<RIL>" (1–5 Zeichen, beginnt mit Buchstabe)
 BST_NUR_RIL = re.compile(r"^[A-Za-zÄÖÜäöü][A-Za-zÄÖÜäöü0-9 ]{0,4}$")
 UNGUELTIG = re.compile(r'[<>:"/\\|?*]')
+
+HINWEIS_LEER = {
+    "PT1": "Wird nach Eingabe des PSP-Elements automatisch gesucht.",
+    "PT2": "Wird nach Wahl von Region und Betriebsstelle automatisch gesucht.",
+}
 
 
 # ---------------------------------------------------------------- Logik
@@ -173,6 +189,60 @@ def betriebsstelle_suchen(region: Path, ril: str):
     return sorted(treffer, key=lambda d: (not hat_klarname(d.name), d.name.casefold()))[0]
 
 
+# ---------------------------------------------------------------- Quellordner suchen
+def pt1_gruppenordner(psp: str) -> Path:
+    """M17527-01 -> \\\\Thsdiza06fs01\\psp\\M17xxx"""
+    return Path(KOPIERBEREICHE["PT1"][2]) / (psp[:PT1_GRUPPE_STELLEN].upper() + PT1_GRUPPE_SUFFIX)
+
+
+def pt1_ordner_finden(psp: str):
+    """
+    Sucht auf dem PT1-Laufwerk den Projektordner zur PSP.
+    -> (Treffer, Fehlertext oder None). Treffer: Name beginnt mit der PSP,
+       gefolgt von Leerzeichen, '_', '-' oder Ende.
+    """
+    gruppe = pt1_gruppenordner(psp)
+    muster = re.compile(r"^" + re.escape(psp) + r"(?:[\s_\-]|$)", re.IGNORECASE)
+    try:
+        if not gruppe.is_dir():
+            return [], f"Ordner nicht gefunden: {gruppe}"
+        treffer = sorted((d for d in gruppe.iterdir() if d.is_dir() and muster.match(d.name)),
+                         key=lambda d: d.name.casefold())
+    except OSError as e:
+        return [], f"PT1-Laufwerk nicht lesbar: {e}"
+    if not treffer:
+        return [], f"Kein Ordner für {psp} in {gruppe} gefunden."
+    return treffer, None
+
+
+def pt2_regionsordner(region_anzeige: str) -> Path:
+    """Ost -> \\\\destgsfs10\\IL90-Projekte-ro\\OST"""
+    return region_ordner(Path(KOPIERBEREICHE["PT2"][2]), region_anzeige)
+
+
+def pt2_ordner_finden(region_anzeige: str, ril: str):
+    """
+    Sucht auf dem PT2-Laufwerk den Ordner zur Betriebsstelle.
+    -> (Treffer, Fehlertext oder None). Treffer: Name = RIL100-Kürzel, optional
+       gefolgt von Ziffern und/oder einem Zusatz (BLN0, BLN1, BLN0_alt …).
+       RIL100 + "0" (z. B. BLN0) steht an erster Stelle.
+    """
+    region = pt2_regionsordner(region_anzeige)
+    kern = ril.replace(" ", "")
+    muster = re.compile(r"^" + re.escape(kern) + r"\d*(?:[\s_\-].*)?$", re.IGNORECASE)
+    bevorzugt = (kern + PT2_STANDARD_SUFFIX).casefold()
+    try:
+        if not region.is_dir():
+            return [], f"Ordner nicht gefunden: {region}"
+        treffer = [d for d in region.iterdir() if d.is_dir() and muster.match(d.name)]
+    except OSError as e:
+        return [], f"PT2-Laufwerk nicht lesbar: {e}"
+    if not treffer:
+        return [], f"Kein Ordner für {ril} in {region} gefunden."
+    treffer.sort(key=lambda d: (d.name.casefold() != bevorzugt, d.name.casefold()))
+    return treffer, None
+
+
 def ordner_kopieren(auftraege, q: queue.Queue):
     """
     Kopiert nacheinander alle Aufträge [(kennung, quelle, ziel), ...] rekursiv.
@@ -215,8 +285,13 @@ class App(tk.Tk):
         self.title("Prüfstruktur Stellwerksprojekt")
         self.resizable(False, False)
         self.q = queue.Queue()
+        self.such_q = queue.Queue()                       # Ergebnisse der Quellordner-Suche
         self.wurzel = None
-        self.bst_map = {}      # Anzeigetext in der Liste -> echter Ordnername
+        self.bst_map = {}                                 # Anzeigetext -> echter Ordnername
+        self.such_job = {k: None for k in KOPIERBEREICHE}  # Verzögerung beim Tippen
+        self.such_nr = {k: 0 for k in KOPIERBEREICHE}      # nur letzte Suche zählt
+        self.auto_wert = {k: "" for k in KOPIERBEREICHE}   # zuletzt automatisch gesetzter Pfad
+        self.hinweise = {}
 
         self.basis = tk.StringVar(value=STANDARD_BASIS)
         self.region = tk.StringVar(value="Ost")
@@ -225,7 +300,6 @@ class App(tk.Tk):
         self.psp = tk.StringVar()
         self.az = tk.StringVar()
         self.beschr = tk.StringVar()
-        # je Kopierbereich: Quelle und Zielunterordner
         self.quellen = {k: tk.StringVar() for k in KOPIERBEREICHE}
         self.unterziele = {k: tk.StringVar(value=v[1][0]) for k, v in KOPIERBEREICHE.items()}
 
@@ -278,6 +352,9 @@ class App(tk.Tk):
                   ttk.Entry(f, textvariable=self.quellen[kennung], width=55),
                   ttk.Button(f, text="Durchsuchen…",
                              command=lambda k=kennung: self.quelle_waehlen(k)))
+            self.hinweise[kennung] = ttk.Label(f, foreground="gray", wraplength=520,
+                                               justify="left", text=HINWEIS_LEER[kennung])
+            self.hinweise[kennung].grid(row=r, column=1, columnspan=2, sticky="w", padx=5); r += 1
             zeile(f"{kennung} kopieren nach:",
                   ttk.Combobox(f, textvariable=self.unterziele[kennung], values=unterordner,
                                state="readonly", width=20))
@@ -298,7 +375,96 @@ class App(tk.Tk):
         self.basis.trace_add("write", lambda *_: self.liste_aktualisieren())
         for v in (self.bst, self.klarname, self.psp, self.az, self.beschr):
             v.trace_add("write", lambda *_: self.vorschau_aktualisieren())
+        # automatische Suche der Quellordner
+        self.psp.trace_add("write", lambda *_: self.suche_planen("PT1"))
+        self.bst.trace_add("write", lambda *_: self.suche_planen("PT2"))
+        self.region.trace_add("write", lambda *_: self.suche_planen("PT2"))
+
         self.liste_aktualisieren()
+        self.after(150, self.such_abfragen)
+        self.suche_planen("PT2")
+
+    # ------------------------------------------------ Automatische Vorauswahl PT1/PT2
+    def such_auftrag(self, kennung):
+        """-> (Funktion, Beschreibung) oder (None, None), wenn Angaben fehlen."""
+        if kennung == "PT1":
+            psp = self.psp.get().strip().upper()
+            if not PSP_MUSTER.match(psp):
+                return None, None
+            return (lambda: pt1_ordner_finden(psp)), f"Suche {psp} in {pt1_gruppenordner(psp)} …"
+        if kennung == "PT2":
+            ril = self.ril_wert()
+            region = self.region.get()
+            if not ril:
+                return None, None
+            return ((lambda: pt2_ordner_finden(region, ril)),
+                    f"Suche {ril} in {pt2_regionsordner(region)} …")
+        return None, None
+
+    def suche_planen(self, kennung):
+        """Beim Tippen 0,5 s warten, dann suchen (UNC-Zugriffe können langsam sein)."""
+        if self.such_job[kennung]:
+            self.after_cancel(self.such_job[kennung])
+        self.such_job[kennung] = self.after(500, lambda: self.suchen(kennung))
+
+    def suchen(self, kennung):
+        self.such_job[kennung] = None
+        self.such_nr[kennung] += 1
+        nr = self.such_nr[kennung]
+        funktion, text = self.such_auftrag(kennung)
+        if funktion is None:
+            self.hinweise[kennung].config(text=HINWEIS_LEER[kennung], foreground="gray")
+            self.auto_quelle_leeren(kennung)
+            return
+        self.hinweise[kennung].config(text=text, foreground="gray")
+
+        def arbeit():
+            treffer, fehler = funktion()
+            self.such_q.put((kennung, nr, treffer, fehler))
+
+        threading.Thread(target=arbeit, daemon=True).start()
+
+    def auto_quelle_leeren(self, kennung):
+        """Automatisch gesetzten Wert entfernen, manuelle Auswahl behalten."""
+        aktuell = self.quellen[kennung].get().strip()
+        if aktuell and aktuell == self.auto_wert[kennung]:
+            self.quellen[kennung].set("")
+        self.auto_wert[kennung] = ""
+
+    def such_abfragen(self):
+        try:
+            while True:
+                kennung, nr, treffer, fehler = self.such_q.get_nowait()
+                if nr != self.such_nr[kennung]:      # veraltetes Ergebnis
+                    continue
+                self.such_ergebnis(kennung, treffer, fehler)
+        except queue.Empty:
+            pass
+        self.after(150, self.such_abfragen)
+
+    def such_ergebnis(self, kennung, treffer, fehler):
+        hinweis = self.hinweise[kennung]
+        aktuell = self.quellen[kennung].get().strip()
+        automatisch = not aktuell or aktuell == self.auto_wert[kennung]
+
+        if fehler or not treffer:
+            hinweis.config(text="⚠ " + (fehler or "Nichts gefunden."), foreground="darkorange")
+            if automatisch:
+                self.auto_quelle_leeren(kennung)
+            return
+
+        gefunden = str(treffer[0])
+        zusatz = ""
+        if len(treffer) > 1:
+            andere = ", ".join(d.name for d in treffer[1:4]) + (" …" if len(treffer) > 4 else "")
+            zusatz = f"\nWeitere Treffer: {andere} – ggf. über „Durchsuchen…“ ändern."
+        if automatisch:
+            self.quellen[kennung].set(gefunden)
+            self.auto_wert[kennung] = gefunden
+            hinweis.config(text=f"✔ Vorausgewählt: {treffer[0].name}{zusatz}", foreground="darkgreen")
+        else:
+            hinweis.config(text=f"Gefunden: {treffer[0].name} – manuelle Auswahl bleibt erhalten.{zusatz}",
+                           foreground="#1f5fbf")
 
     # ------------------------------------------------ Betriebsstellen-Liste
     def region_pfad(self):
@@ -412,18 +578,27 @@ class App(tk.Tk):
             self.basis.set(str(Path(d)))
 
     def quelle_waehlen(self, kennung):
-        start = KOPIERBEREICHE[kennung][2]
-        if not Path(start).exists():
+        # Startordner: aktueller Wert > passender Unterordner > Laufwerk
+        kandidaten = [self.quellen[kennung].get().strip()]
+        if kennung == "PT1":
+            psp = self.psp.get().strip().upper()
+            if PSP_MUSTER.match(psp):
+                kandidaten.append(str(pt1_gruppenordner(psp)))
+        elif kennung == "PT2":
+            kandidaten.append(str(pt2_regionsordner(self.region.get())))
+        kandidaten.append(KOPIERBEREICHE[kennung][2])
+        start = next((k for k in kandidaten if k and Path(k).is_dir()), None)
+        if start is None:
             messagebox.showwarning(
                 "Laufwerk nicht erreichbar",
-                f"{kennung}-Laufwerk ist nicht erreichbar:\n{start}\n\n"
+                f"{kennung}-Laufwerk ist nicht erreichbar:\n{KOPIERBEREICHE[kennung][2]}\n\n"
                 "VPN/Netzwerkverbindung und Berechtigung prüfen. "
                 "Der Auswahldialog öffnet sich trotzdem.")
-            start = None
-        d = filedialog.askdirectory(initialdir=start,
-                                    title=f"{kennung}-Ordner wählen")
+        d = filedialog.askdirectory(initialdir=start, title=f"{kennung}-Ordner wählen")
         if d:
             self.quellen[kennung].set(str(Path(d)))
+            self.auto_wert[kennung] = ""   # manuelle Auswahl nicht mehr automatisch überschreiben
+            self.hinweise[kennung].config(text="Manuell ausgewählt.", foreground="gray")
 
     # ------------------------------------------------ Anlegen
     def anlegen(self):
@@ -468,6 +643,8 @@ class App(tk.Tk):
             warn.append(f"Betriebsstellenordner wird neu angelegt:\n{bst}")
         if neu is not None:
             warn.append(f"Betriebsstellenordner wird umbenannt:\n{bst.name}  →  {neu.name}")
+        for k, p in quellen.items():
+            warn.append(f"{k} wird kopiert von:\n{p}")
         if warn and not messagebox.askyesno("Hinweis", "\n\n".join(warn) + "\n\nFortfahren?"):
             return
 
