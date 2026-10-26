@@ -13,12 +13,12 @@ Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\0180_M17525-01_Zweigleisigkeit
   "<RIL100> - <Klarname>" umbenannt (vervollständigt).
 - Existiert der Ordner der Betriebsstelle nicht, wird er als
   "<RIL100> - <Klarname>" angelegt.
-- Automatische Vorauswahl der Quellordner:
+- Automatische Suche schlägt Quellordner vor, wählt sie aber nicht als Kopierquelle:
     PT1: nach Eingabe des PSP-Elements, z. B.
          M17527-01 -> \\\\Thsdiza06fs01\\psp\\M17xxx\\M17527-01 Zweigleisigkeit Lübbenau-Cottbus
     PT2: nach Wahl von Region und RIL100-Kürzel, z. B.
          OST + BLN -> \\\\destgsfs10\\IL90-Projekte-ro\\OST\\BLN0
-- Kopiert optional je einen Ordner von den Ablagelaufwerken nach
+- Erst nach ausdrücklicher Auswahl/Freigabe und Opt-in werden Ordner kopiert nach
   01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges> und
   01_Eingangsunterlagen/PT2/<Stellwerk|ZX>
 
@@ -33,6 +33,14 @@ import tkinter as tk
 from datetime import date
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
+from stw_pruefstruktur_logik import (
+    CopySelection, PSP_MUSTER, kopierauftrag_pruefen as _kopierauftrag_pruefen,
+    normalisiere_psp, pfade_ueberlappen,
+    pt1_gruppenordner as _pt1_gruppenordner,
+    pt1_ordner_finden as _pt1_ordner_finden,
+    quelle_ist_gesamtordner as _quelle_ist_gesamtordner,
+    suchergebnis_ist_aktuell,
+)
 
 # ---------------------------------------------------------------- Einstellungen
 # Basisverzeichnis, unter dem die Regionen liegen
@@ -101,7 +109,6 @@ VORLAGE = """
 # Kennzeichnung in der Auswahlliste für Ordner ohne Klarnamen
 OHNE_KLARNAME = "  (Klarname fehlt)"
 
-PSP_MUSTER = re.compile(r"^[A-Z]\d{5}-\d{2}$")           # z. B. M17525-01
 AZ_MUSTER = re.compile(r"^\d{4}$")                       # z. B. 0180
 RIL_MUSTER = re.compile(r"^[A-ZÄÖÜ][A-ZÄÖÜ0-9 ]{1,4}$")  # z. B. BLN, BL, BLN F
 # Ordner "<RIL> - <Name>"
@@ -192,27 +199,23 @@ def betriebsstelle_suchen(region: Path, ril: str):
 # ---------------------------------------------------------------- Quellordner suchen
 def pt1_gruppenordner(psp: str) -> Path:
     """M17527-01 -> \\\\Thsdiza06fs01\\psp\\M17xxx"""
-    return Path(KOPIERBEREICHE["PT1"][2]) / (psp[:PT1_GRUPPE_STELLEN].upper() + PT1_GRUPPE_SUFFIX)
+    return _pt1_gruppenordner(
+        psp, KOPIERBEREICHE["PT1"][2], PT1_GRUPPE_STELLEN, PT1_GRUPPE_SUFFIX)
 
 
 def pt1_ordner_finden(psp: str):
-    """
-    Sucht auf dem PT1-Laufwerk den Projektordner zur PSP.
-    -> (Treffer, Fehlertext oder None). Treffer: Name beginnt mit der PSP,
-       gefolgt von Leerzeichen, '_', '-' oder Ende.
-    """
-    gruppe = pt1_gruppenordner(psp)
-    muster = re.compile(r"^" + re.escape(psp) + r"(?:[\s_\-]|$)", re.IGNORECASE)
-    try:
-        if not gruppe.is_dir():
-            return [], f"Ordner nicht gefunden: {gruppe}"
-        treffer = sorted((d for d in gruppe.iterdir() if d.is_dir() and muster.match(d.name)),
-                         key=lambda d: d.name.casefold())
-    except OSError as e:
-        return [], f"PT1-Laufwerk nicht lesbar: {e}"
-    if not treffer:
-        return [], f"Kein Ordner für {psp} in {gruppe} gefunden."
-    return treffer, None
+    return _pt1_ordner_finden(
+        psp, KOPIERBEREICHE["PT1"][2], PT1_GRUPPE_STELLEN, PT1_GRUPPE_SUFFIX)
+
+
+def quelle_ist_gesamtordner(kennung, quelle, vorschlag=None, kontext=()):
+    return _quelle_ist_gesamtordner(
+        kennung, quelle, KOPIERBEREICHE[kennung][2], vorschlag, kontext)
+
+
+def kopierauftrag_pruefen(kennung, auswahl, kontext, ziel, vorschlag=None):
+    return _kopierauftrag_pruefen(
+        kennung, auswahl, kontext, ziel, KOPIERBEREICHE[kennung][2], vorschlag)
 
 
 def pt2_regionsordner(region_anzeige: str) -> Path:
@@ -251,6 +254,8 @@ def ordner_kopieren(auftraege, q: queue.Queue):
     ergebnisse = []
     for kennung, quelle, ziel in auftraege:
         try:
+            if pfade_ueberlappen(quelle, ziel):
+                raise ValueError(f"Quelle und Ziel überschneiden sich: {quelle} → {ziel}")
             q.put(("start", kennung))
             dateien = [p for p in quelle.rglob("*") if p.is_file()]
             q.put(("max", len(dateien)))
@@ -283,15 +288,22 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Prüfstruktur Stellwerksprojekt")
-        self.resizable(False, False)
+        self.geometry("800x720")
+        self.minsize(700, 500)
+        self.resizable(True, True)
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
         self.q = queue.Queue()
         self.such_q = queue.Queue()                       # Ergebnisse der Quellordner-Suche
         self.wurzel = None
         self.bst_map = {}                                 # Anzeigetext -> echter Ordnername
         self.such_job = {k: None for k in KOPIERBEREICHE}  # Verzögerung beim Tippen
         self.such_nr = {k: 0 for k in KOPIERBEREICHE}      # nur letzte Suche zählt
-        self.auto_wert = {k: "" for k in KOPIERBEREICHE}   # zuletzt automatisch gesetzter Pfad
         self.hinweise = {}
+        self.auswahlen = {k: CopySelection() for k in KOPIERBEREICHE}
+        self.kopieren_vars = {k: tk.BooleanVar(value=False) for k in KOPIERBEREICHE}
+        self.gesamt_vars = {k: tk.BooleanVar(value=False) for k in KOPIERBEREICHE}
+        self.vorschlaege = {k: "" for k in KOPIERBEREICHE}
 
         self.basis = tk.StringVar(value=STANDARD_BASIS)
         self.region = tk.StringVar(value="Ost")
@@ -303,8 +315,21 @@ class App(tk.Tk):
         self.quellen = {k: tk.StringVar() for k in KOPIERBEREICHE}
         self.unterziele = {k: tk.StringVar(value=v[1][0]) for k, v in KOPIERBEREICHE.items()}
 
-        f = ttk.Frame(self, padding=12)
-        f.grid()
+        haupt = ttk.Frame(self)
+        haupt.grid(sticky="nsew")
+        haupt.rowconfigure(0, weight=1)
+        haupt.columnconfigure(0, weight=1)
+        leinwand = tk.Canvas(haupt, highlightthickness=0)
+        leinwand.grid(row=0, column=0, sticky="nsew")
+        bildlauf = ttk.Scrollbar(haupt, orient="vertical", command=leinwand.yview)
+        bildlauf.grid(row=0, column=1, sticky="ns")
+        leinwand.configure(yscrollcommand=bildlauf.set)
+        f = ttk.Frame(leinwand, padding=12)
+        fenster = leinwand.create_window((0, 0), window=f, anchor="nw")
+        f.bind("<Configure>", lambda _e: leinwand.configure(
+            scrollregion=leinwand.bbox("all")))
+        leinwand.bind("<Configure>", lambda e: leinwand.itemconfigure(
+            fenster, width=e.width))
         r = 0
 
         def zeile(text, widget, button=None):
@@ -342,19 +367,41 @@ class App(tk.Tk):
         # --- Projekt
         ueberschrift("Projekt")
         zeile("Anlagenzustand (z. B. 0180):", ttk.Entry(f, textvariable=self.az, width=55))
-        zeile("PSP-Element (z. B. M17525-01):", ttk.Entry(f, textvariable=self.psp, width=55))
+        zeile("PSP-Element (z. B. M17525-01A):", ttk.Entry(f, textvariable=self.psp, width=55))
         zeile("Projektbeschreibung:", ttk.Entry(f, textvariable=self.beschr, width=55))
 
         # --- PT1 / PT2
         for kennung, (_, unterordner, start) in KOPIERBEREICHE.items():
             ueberschrift(f"{kennung}-Unterlagen  ({start})")
-            zeile(f"{kennung}-Quellordner (optional):",
-                  ttk.Entry(f, textvariable=self.quellen[kennung], width=55),
+            quell_entry = ttk.Entry(f, textvariable=self.quellen[kennung], width=55)
+            zeile(f"{kennung}-Quellordner:", quell_entry,
                   ttk.Button(f, text="Durchsuchen…",
                              command=lambda k=kennung: self.quelle_waehlen(k)))
+            controls = ttk.Frame(f)
+            controls.grid(row=r, column=1, columnspan=2, sticky="w", padx=5, pady=2)
+            ttk.Button(controls, text="Auswahl löschen / nicht kopieren",
+                       command=lambda k=kennung: self.quelle_loeschen(k)).pack(side="left")
+            ttk.Button(controls, text="Quelle bestätigen",
+                       command=lambda k=kennung: self.quelle_bestaetigen(k)).pack(
+                           side="left", padx=(5, 0))
+            r += 1
+            self.kopieren_vars[kennung].trace_add(
+                "write", lambda *_args, k=kennung: self.kopieren_gewechselt(k))
+            ttk.Checkbutton(f, text="Daten kopieren", variable=self.kopieren_vars[kennung]).grid(
+                row=r, column=1, columnspan=2, sticky="w", padx=5); r += 1
+            ttk.Checkbutton(
+                f, text="Gesamten Ordner einschließlich aller Unterordner kopieren",
+                variable=self.gesamt_vars[kennung],
+                command=lambda k=kennung: self.gesamt_gewechselt(k)).grid(
+                    row=r, column=1, columnspan=2, sticky="w", padx=5); r += 1
+            vorschlag_zeile = ttk.Frame(f)
+            vorschlag_zeile.grid(row=r, column=1, columnspan=2, sticky="w", padx=5)
+            ttk.Button(vorschlag_zeile, text="Vorschlag als Quelle bestätigen",
+                       command=lambda k=kennung: self.vorschlag_uebernehmen(k)).pack(side="left")
             self.hinweise[kennung] = ttk.Label(f, foreground="gray", wraplength=520,
                                                justify="left", text=HINWEIS_LEER[kennung])
-            self.hinweise[kennung].grid(row=r, column=1, columnspan=2, sticky="w", padx=5); r += 1
+            self.hinweise[kennung].pack(side="left", padx=5)
+            r += 1
             zeile(f"{kennung} kopieren nach:",
                   ttk.Combobox(f, textvariable=self.unterziele[kennung], values=unterordner,
                                state="readonly", width=20))
@@ -373,9 +420,15 @@ class App(tk.Tk):
         self.region_box.bind("<<ComboboxSelected>>", lambda e: self.region_gewechselt())
         self.bst_box.bind("<<ComboboxSelected>>", lambda e: self.klarname.set(""))
         self.basis.trace_add("write", lambda *_: self.liste_aktualisieren())
-        for v in (self.bst, self.klarname, self.psp, self.az, self.beschr):
+        kontext_vars = (self.basis, self.region, self.bst, self.klarname,
+                        self.psp, self.az, self.beschr, *self.unterziele.values())
+        for v in kontext_vars:
+            v.trace_add("write", lambda *_: self.kontext_gewechselt())
+        for v in kontext_vars:
             v.trace_add("write", lambda *_: self.vorschau_aktualisieren())
-        # automatische Suche der Quellordner
+        for k in KOPIERBEREICHE:
+            self.quellen[k].trace_add("write", lambda *_args, kennung=k: self.quelle_gewechselt(kennung))
+        # Sucheingaben sofort entwerten, noch vor dem Debounce.
         self.psp.trace_add("write", lambda *_: self.suche_planen("PT1"))
         self.bst.trace_add("write", lambda *_: self.suche_planen("PT2"))
         self.region.trace_add("write", lambda *_: self.suche_planen("PT2"))
@@ -385,10 +438,78 @@ class App(tk.Tk):
         self.suche_planen("PT2")
 
     # ------------------------------------------------ Automatische Vorauswahl PT1/PT2
+    def kopierkontext(self):
+        """Alle Angaben, die Quelle, Ziel oder Kopierfreigabe beeinflussen."""
+        return (
+            normalisiere_psp(self.psp.get()),
+            self.region.get().strip(),
+            self.ril_wert(),
+            self.basis.get().strip(),
+            self.bst.get().strip(),
+            self.klarname.get().strip(),
+            self.az.get().strip(),
+            self.beschr.get().strip(),
+            tuple(self.unterziele[k].get() for k in KOPIERBEREICHE),
+        )
+
+    def kontext_gewechselt(self):
+        kontext = self.kopierkontext()
+        for kennung, auswahl in self.auswahlen.items():
+            if auswahl.revoke_if_context_changed(kontext):
+                self.kopieren_vars[kennung].set(False)
+                self.gesamt_vars[kennung].set(False)
+
+    def quelle_gewechselt(self, kennung):
+        self.auswahlen[kennung].set_source(self.quellen[kennung].get())
+        if not self.auswahlen[kennung].enabled:
+            self.kopieren_vars[kennung].set(False)
+            self.gesamt_vars[kennung].set(False)
+
+    def kopieren_gewechselt(self, kennung):
+        self.auswahlen[kennung].enabled = self.kopieren_vars[kennung].get()
+
+    def gesamt_gewechselt(self, kennung):
+        self.auswahlen[kennung].copy_all = self.gesamt_vars[kennung].get()
+
+    def quelle_loeschen(self, kennung):
+        self.auswahlen[kennung].clear()
+        self.quellen[kennung].set("")
+        self.kopieren_vars[kennung].set(False)
+        self.gesamt_vars[kennung].set(False)
+        self.such_nr[kennung] += 1
+        self.vorschlaege[kennung] = ""
+        if self.such_job[kennung]:
+            self.after_cancel(self.such_job[kennung])
+            self.such_job[kennung] = None
+        self.hinweise[kennung].config(
+            text="Auswahl gelöscht. Es werden keine Daten kopiert.", foreground="gray")
+
+    def quelle_bestaetigen(self, kennung):
+        auswahl = self.auswahlen[kennung]
+        if not auswahl.source:
+            messagebox.showwarning("Keine Quelle", f"Bitte zuerst einen {kennung}-Quellordner wählen.")
+            return
+        if auswahl.approve(self.kopierkontext()):
+            self.hinweise[kennung].config(
+                text=f"Quelle ausdrücklich bestätigt:\n{auswahl.source}", foreground="#1f5fbf")
+
+    def vorschlag_uebernehmen(self, kennung):
+        vorschlag = self.vorschlaege[kennung]
+        if not vorschlag:
+            messagebox.showinfo("Kein Vorschlag", "Es liegt derzeit kein Suchtreffer als Vorschlag vor.")
+            return
+        self.quellen[kennung].set(vorschlag)
+        auswahl = self.auswahlen[kennung]
+        auswahl.approve(self.kopierkontext())
+        self.hinweise[kennung].config(
+            text=f"Vorschlag als Quelle bestätigt:\n{vorschlag}\n"
+                 "Zum Kopieren zusätzlich „Daten kopieren“ aktivieren.",
+            foreground="#1f5fbf")
+
     def such_auftrag(self, kennung):
         """-> (Funktion, Beschreibung) oder (None, None), wenn Angaben fehlen."""
         if kennung == "PT1":
-            psp = self.psp.get().strip().upper()
+            psp = normalisiere_psp(self.psp.get())
             if not PSP_MUSTER.match(psp):
                 return None, None
             return (lambda: pt1_ordner_finden(psp)), f"Suche {psp} in {pt1_gruppenordner(psp)} …"
@@ -397,45 +518,47 @@ class App(tk.Tk):
             region = self.region.get()
             if not ril:
                 return None, None
+            region_pfad = Path(KOPIERBEREICHE["PT2"][2]) / REGIONEN.get(region, region)
             return ((lambda: pt2_ordner_finden(region, ril)),
-                    f"Suche {ril} in {pt2_regionsordner(region)} …")
+                    f"Suche {ril} in {region_pfad} …")
         return None, None
 
     def suche_planen(self, kennung):
         """Beim Tippen 0,5 s warten, dann suchen (UNC-Zugriffe können langsam sein)."""
-        if self.such_job[kennung]:
-            self.after_cancel(self.such_job[kennung])
-        self.such_job[kennung] = self.after(500, lambda: self.suchen(kennung))
-
-    def suchen(self, kennung):
-        self.such_job[kennung] = None
         self.such_nr[kennung] += 1
         nr = self.such_nr[kennung]
+        kontext = self.such_kontext(kennung)
+        self.vorschlaege[kennung] = ""
+        if self.such_job[kennung]:
+            self.after_cancel(self.such_job[kennung])
+        self.such_job[kennung] = self.after(
+            500, lambda: self.suchen(kennung, nr, kontext))
+
+    def such_kontext(self, kennung):
+        if kennung == "PT1":
+            return (normalisiere_psp(self.psp.get()),)
+        return (self.region.get().strip(), self.ril_wert())
+
+    def suchen(self, kennung, nr, kontext):
+        self.such_job[kennung] = None
         funktion, text = self.such_auftrag(kennung)
         if funktion is None:
             self.hinweise[kennung].config(text=HINWEIS_LEER[kennung], foreground="gray")
-            self.auto_quelle_leeren(kennung)
             return
         self.hinweise[kennung].config(text=text, foreground="gray")
 
         def arbeit():
             treffer, fehler = funktion()
-            self.such_q.put((kennung, nr, treffer, fehler))
+            self.such_q.put((kennung, nr, kontext, treffer, fehler))
 
         threading.Thread(target=arbeit, daemon=True).start()
-
-    def auto_quelle_leeren(self, kennung):
-        """Automatisch gesetzten Wert entfernen, manuelle Auswahl behalten."""
-        aktuell = self.quellen[kennung].get().strip()
-        if aktuell and aktuell == self.auto_wert[kennung]:
-            self.quellen[kennung].set("")
-        self.auto_wert[kennung] = ""
 
     def such_abfragen(self):
         try:
             while True:
-                kennung, nr, treffer, fehler = self.such_q.get_nowait()
-                if nr != self.such_nr[kennung]:      # veraltetes Ergebnis
+                kennung, nr, kontext, treffer, fehler = self.such_q.get_nowait()
+                if not suchergebnis_ist_aktuell(
+                        nr, self.such_nr[kennung], kontext, self.such_kontext(kennung)):
                     continue
                 self.such_ergebnis(kennung, treffer, fehler)
         except queue.Empty:
@@ -444,27 +567,19 @@ class App(tk.Tk):
 
     def such_ergebnis(self, kennung, treffer, fehler):
         hinweis = self.hinweise[kennung]
-        aktuell = self.quellen[kennung].get().strip()
-        automatisch = not aktuell or aktuell == self.auto_wert[kennung]
-
         if fehler or not treffer:
             hinweis.config(text="⚠ " + (fehler or "Nichts gefunden."), foreground="darkorange")
-            if automatisch:
-                self.auto_quelle_leeren(kennung)
             return
 
         gefunden = str(treffer[0])
+        self.vorschlaege[kennung] = gefunden
         zusatz = ""
         if len(treffer) > 1:
             andere = ", ".join(d.name for d in treffer[1:4]) + (" …" if len(treffer) > 4 else "")
-            zusatz = f"\nWeitere Treffer: {andere} – ggf. über „Durchsuchen…“ ändern."
-        if automatisch:
-            self.quellen[kennung].set(gefunden)
-            self.auto_wert[kennung] = gefunden
-            hinweis.config(text=f"✔ Vorausgewählt: {treffer[0].name}{zusatz}", foreground="darkgreen")
-        else:
-            hinweis.config(text=f"Gefunden: {treffer[0].name} – manuelle Auswahl bleibt erhalten.{zusatz}",
-                           foreground="#1f5fbf")
+            zusatz = f"\nWeitere Treffer: {andere} – gewünschten Ordner über „Durchsuchen…“ wählen."
+        hinweis.config(
+            text=f"Vorschlag (wird nicht automatisch kopiert): {treffer[0].name}{zusatz}",
+            foreground="darkgreen")
 
     # ------------------------------------------------ Betriebsstellen-Liste
     def region_pfad(self):
@@ -509,7 +624,7 @@ class App(tk.Tk):
 
     def projektordnername(self):
         """Hauptordner: <Anlagenzustand>_<PSP>_<Projektbeschreibung>"""
-        teile = [self.az.get().strip(), self.psp.get().strip(), self.beschr.get().strip()]
+        teile = [self.az.get().strip(), normalisiere_psp(self.psp.get()), self.beschr.get().strip()]
         return bereinigen("_".join(t for t in teile if t))
 
     def betriebsstelle_ermitteln(self):
@@ -597,12 +712,18 @@ class App(tk.Tk):
         d = filedialog.askdirectory(initialdir=start, title=f"{kennung}-Ordner wählen")
         if d:
             self.quellen[kennung].set(str(Path(d)))
-            self.auto_wert[kennung] = ""   # manuelle Auswahl nicht mehr automatisch überschreiben
-            self.hinweise[kennung].config(text="Manuell ausgewählt.", foreground="gray")
+            self.auswahlen[kennung].approve(self.kopierkontext())
+            self.hinweise[kennung].config(
+                text=f"Manuell ausgewählt und als Quelle bestätigt:\n{d}\n"
+                     "Zum Kopieren zusätzlich „Daten kopieren“ aktivieren.",
+                foreground="#1f5fbf")
 
     # ------------------------------------------------ Anlegen
     def anlegen(self):
-        psp, az, beschr = self.psp.get().strip(), self.az.get().strip(), self.beschr.get().strip()
+        psp = normalisiere_psp(self.psp.get())
+        if self.psp.get() != psp:
+            self.psp.set(psp)
+        az, beschr = self.az.get().strip(), self.beschr.get().strip()
         ril = self.ril_wert()
         if not (ril and psp and az and beschr):
             messagebox.showerror("Fehlende Angaben",
@@ -622,15 +743,30 @@ class App(tk.Tk):
                                  "manuell zusammenführen.")
             return
 
-        quellen = {}
+        kontext = self.kopierkontext()
+        auftraege = []
+        breite_quellen = []
+        ziel_bst = neu or bst
         for kennung in KOPIERBEREICHE:
-            q = self.quellen[kennung].get().strip()
-            if q:
-                p = Path(q)
-                if not p.is_dir():
-                    messagebox.showerror("Fehler", f"{kennung}-Quelle nicht gefunden:\n{p}")
-                    return
-                quellen[kennung] = p
+            auswahl = self.auswahlen[kennung]
+            ziel = (ziel_bst / self.projektordnername() / KOPIERBEREICHE[kennung][0]
+                    / self.unterziele[kennung].get() / Path(auswahl.source or ".").name)
+            try:
+                auftrag = kopierauftrag_pruefen(
+                    kennung, auswahl, kontext, ziel, self.vorschlaege[kennung])
+            except ValueError as e:
+                messagebox.showerror("Kopierauswahl prüfen", str(e))
+                return
+            if auftrag is None:
+                continue
+            _, quelle, ziel = auftrag
+            if not quelle.is_dir():
+                messagebox.showerror("Fehler", f"{kennung}-Quelle nicht gefunden:\n{quelle}")
+                return
+            auftraege.append(auftrag)
+            if quelle_ist_gesamtordner(
+                    kennung, quelle, self.vorschlaege[kennung], kontext):
+                breite_quellen.append((kennung, quelle))
 
         warn = []
         if not existiert and not RIL_MUSTER.match(ril):
@@ -638,16 +774,28 @@ class App(tk.Tk):
         if not AZ_MUSTER.match(az):
             warn.append(f"Anlagenzustand '{az}' ist nicht 4-stellig numerisch.")
         if not PSP_MUSTER.match(psp):
-            warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01.")
+            warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01 "
+                        "oder M19061-01A (optional ein abschließender Großbuchstabe).")
         if not existiert:
             warn.append(f"Betriebsstellenordner wird neu angelegt:\n{bst}")
         if neu is not None:
             warn.append(f"Betriebsstellenordner wird umbenannt:\n{bst.name}  →  {neu.name}")
-        for k, p in quellen.items():
+        for k, p, _ in auftraege:
             warn.append(f"{k} wird kopiert von:\n{p}")
+
+        for kennung, quelle in breite_quellen:
+            text = (
+                f"{kennung}: Es wird der gesamte Ordner rekursiv einschließlich aller "
+                f"Unterordner kopiert:\n{quelle}\n\n"
+                "Sind Sie sicher, dass dieser vollständige Ordner kopiert werden soll?")
+            if not messagebox.askyesno(
+                    "Gesamten Ordner kopieren", text, default="no", icon="warning"):
+                return
+
         if warn and not messagebox.askyesno("Hinweis", "\n\n".join(warn) + "\n\nFortfahren?"):
             return
 
+        auftraege_snapshot = tuple(auftraege)
         if neu is not None:
             try:
                 bst.rename(neu)
@@ -661,6 +809,7 @@ class App(tk.Tk):
             self.klarname.set("")
 
         wurzel = bst / self.projektordnername()
+        quellen = {k: q for k, q, _ in auftraege}
         try:
             for p in vorlage_parsen(VORLAGE):
                 (wurzel / p).mkdir(parents=True, exist_ok=True)
@@ -690,13 +839,10 @@ class App(tk.Tk):
             messagebox.showinfo("Fertig", f"Struktur angelegt:\n{wurzel}")
             return
 
-        auftraege = [
-            (k, q, wurzel / KOPIERBEREICHE[k][0] / self.unterziele[k].get() / q.name)
-            for k, q in quellen.items()
-        ]
         self.btn.config(state="disabled")
         self.status.config(text="Ermittle Dateien …")
-        threading.Thread(target=ordner_kopieren, args=(auftraege, self.q), daemon=True).start()
+        threading.Thread(
+            target=ordner_kopieren, args=(auftraege_snapshot, self.q), daemon=True).start()
         self.after(100, self.abfragen)
 
     def abfragen(self):
