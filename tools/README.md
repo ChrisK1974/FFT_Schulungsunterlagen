@@ -30,8 +30,9 @@ Element wird bei der PT1-Suche abgeglichen: `M19061-01` trifft nicht
 
 ## Tests
 
-Die Entscheidungslogik und PT1-Suche lassen sich ohne GUI oder reale
-Netzwerkpfade ausführen:
+Das Programm selbst liegt vollständig in `stw_pruefstruktur.py`. Die
+Entscheidungslogik und PT1-Suche lassen sich mit den beiliegenden Tests ohne GUI
+oder reale Netzwerkpfade prüfen:
 
 ```sh
 python -m unittest discover -s tools -p 'test_*.py'
