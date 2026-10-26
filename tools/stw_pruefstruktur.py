@@ -2,8 +2,8 @@
 """
 Prüfstruktur für Stellwerksprojekte anlegen (mit grafischer Oberfläche).
 
-Ablage:  <Basis>\\<Region>\\<RIL100> - <Klarname>\\<PSP>_AZ<Anlagenzustand>_<Beschreibung>
-Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\M17525-01_AZ0180_Zweigleisigkeit
+Ablage:  <Basis>\\<Region>\\<RIL100> - <Klarname>\\<Anlagenzustand>_<PSP>_<Projektbeschreibung>
+Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\0180_M17525-01_Zweigleisigkeit
 
 - Region auswählen.
 - Betriebsstelle aus der Liste der vorhandenen Ordner der Region wählen
@@ -13,8 +13,9 @@ Beispiel: C:\\Projekte\\OST\\BLN - Lübbenau\\M17525-01_AZ0180_Zweigleisigkeit
   "<RIL100> - <Klarname>" umbenannt (vervollständigt).
 - Existiert der Ordner der Betriebsstelle nicht, wird er als
   "<RIL100> - <Klarname>" angelegt.
-- Kopiert optional einen Ordner der zentralen Ablage nach
-  01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges>
+- Kopiert optional je einen Ordner der zentralen Ablage nach
+  01_Eingangsunterlagen/PT1/<Stellwerk|ZX|sonstiges> und
+  01_Eingangsunterlagen/PT2/<Stellwerk|ZX>
 
 Voraussetzung: Python 3.8+ (tkinter ist in der Windows-Installation enthalten)
 Start: Doppelklick oder  python stw_pruefstruktur.py
@@ -29,7 +30,7 @@ from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
 # ---------------------------------------------------------------- Einstellungen
-# Startordner des Auswahldialogs für PT1 (zentrales Ablagelaufwerk)
+# Startordner des Auswahldialogs für PT1/PT2 (zentrales Ablagelaufwerk)
 ZENTRALE_ABLAGE = r"\\server\projekte"   # z. B. r"P:\Projekte"
 # Basisverzeichnis, unter dem die Regionen liegen
 STANDARD_BASIS = r"C:\Projekte"
@@ -78,8 +79,11 @@ VORLAGE = """
   Freigabe
 99_Archiv
 """
-PT1_PFAD = Path("01_Eingangsunterlagen", "PT1")
-PT1_UNTERORDNER = ["Stellwerk", "ZX", "sonstiges"]
+# Kopierbereiche: Kennung -> (Pfad im Projekt, mögliche Unterordner)
+KOPIERBEREICHE = {
+    "PT1": (Path("01_Eingangsunterlagen", "PT1"), ["Stellwerk", "ZX", "sonstiges"]),
+    "PT2": (Path("01_Eingangsunterlagen", "PT2"), ["Stellwerk", "ZX"]),
+}
 
 # Kennzeichnung in der Auswahlliste für Ordner ohne Klarnamen
 OHNE_KLARNAME = "  (Klarname fehlt)"
@@ -167,32 +171,39 @@ def betriebsstelle_suchen(region: Path, ril: str):
     return sorted(treffer, key=lambda d: (not hat_klarname(d.name), d.name.casefold()))[0]
 
 
-def ordner_kopieren(quelle: Path, ziel: Path, q: queue.Queue):
-    """Kopiert rekursiv; vorhandene Dateien werden NICHT überschrieben."""
-    try:
-        dateien = [p for p in quelle.rglob("*") if p.is_file()]
-        q.put(("max", len(dateien)))
-        kopiert = uebersprungen = 0
-        fehler = []
-        ziel.mkdir(parents=True, exist_ok=True)
-        for d in quelle.rglob("*"):
-            if d.is_dir():
-                (ziel / d.relative_to(quelle)).mkdir(parents=True, exist_ok=True)
-        for i, src in enumerate(dateien, 1):
-            dst = ziel / src.relative_to(quelle)
-            try:
-                if dst.exists():
-                    uebersprungen += 1
-                else:
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src, dst)
-                    kopiert += 1
-            except OSError as e:
-                fehler.append(f"{src}: {e}")
-            q.put(("fortschritt", i, src.name))
-        q.put(("fertig", kopiert, uebersprungen, fehler))
-    except Exception as e:  # z. B. Laufwerk nicht erreichbar
-        q.put(("abbruch", str(e)))
+def ordner_kopieren(auftraege, q: queue.Queue):
+    """
+    Kopiert nacheinander alle Aufträge [(kennung, quelle, ziel), ...] rekursiv.
+    Vorhandene Dateien werden NICHT überschrieben.
+    """
+    ergebnisse = []
+    for kennung, quelle, ziel in auftraege:
+        try:
+            q.put(("start", kennung))
+            dateien = [p for p in quelle.rglob("*") if p.is_file()]
+            q.put(("max", len(dateien)))
+            kopiert = uebersprungen = 0
+            fehler = []
+            ziel.mkdir(parents=True, exist_ok=True)
+            for d in quelle.rglob("*"):
+                if d.is_dir():
+                    (ziel / d.relative_to(quelle)).mkdir(parents=True, exist_ok=True)
+            for i, src in enumerate(dateien, 1):
+                dst = ziel / src.relative_to(quelle)
+                try:
+                    if dst.exists():
+                        uebersprungen += 1
+                    else:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dst)
+                        kopiert += 1
+                except OSError as e:
+                    fehler.append(f"{src}: {e}")
+                q.put(("fortschritt", i, kennung, src.name))
+            ergebnisse.append((kennung, kopiert, uebersprungen, fehler, None))
+        except Exception as e:  # z. B. Laufwerk nicht erreichbar
+            ergebnisse.append((kennung, 0, 0, [], str(e)))
+    q.put(("fertig", ergebnisse))
 
 
 # ---------------------------------------------------------------- Oberfläche
@@ -212,8 +223,9 @@ class App(tk.Tk):
         self.psp = tk.StringVar()
         self.az = tk.StringVar()
         self.beschr = tk.StringVar()
-        self.pt1 = tk.StringVar()
-        self.pt1_ziel = tk.StringVar(value=PT1_UNTERORDNER[0])
+        # je Kopierbereich: Quelle und Zielunterordner
+        self.quellen = {k: tk.StringVar() for k in KOPIERBEREICHE}
+        self.unterziele = {k: tk.StringVar(value=v[1][0]) for k, v in KOPIERBEREICHE.items()}
 
         f = ttk.Frame(self, padding=12)
         f.grid()
@@ -227,8 +239,14 @@ class App(tk.Tk):
                 button.grid(row=r, column=2, sticky="we")
             r += 1
 
+        def ueberschrift(text):
+            nonlocal r
+            ttk.Label(f, text=text, font=("", 10, "bold")).grid(
+                row=r, column=0, sticky="w", pady=(8, 0))
+            r += 1
+
         # --- Ablageort
-        ttk.Label(f, text="Ablageort", font=("", 10, "bold")).grid(row=r, column=0, sticky="w"); r += 1
+        ueberschrift("Ablageort")
         zeile("Basisverzeichnis:", ttk.Entry(f, textvariable=self.basis, width=55),
               ttk.Button(f, text="Durchsuchen…", command=self.basis_waehlen))
         self.region_box = ttk.Combobox(f, textvariable=self.region, values=list(REGIONEN),
@@ -246,17 +264,21 @@ class App(tk.Tk):
         self.bst_status.grid(row=r, column=0, columnspan=3, sticky="w"); r += 1
 
         # --- Projekt
-        ttk.Label(f, text="Projekt", font=("", 10, "bold")).grid(row=r, column=0, sticky="w", pady=(8, 0)); r += 1
-        zeile("PSP-Element (z. B. M17525-01):", ttk.Entry(f, textvariable=self.psp, width=55))
+        ueberschrift("Projekt")
         zeile("Anlagenzustand (z. B. 0180):", ttk.Entry(f, textvariable=self.az, width=55))
+        zeile("PSP-Element (z. B. M17525-01):", ttk.Entry(f, textvariable=self.psp, width=55))
         zeile("Projektbeschreibung:", ttk.Entry(f, textvariable=self.beschr, width=55))
 
-        # --- PT1
-        ttk.Label(f, text="PT1-Unterlagen", font=("", 10, "bold")).grid(row=r, column=0, sticky="w", pady=(8, 0)); r += 1
-        zeile("PT1 von zentraler Ablage (optional):", ttk.Entry(f, textvariable=self.pt1, width=55),
-              ttk.Button(f, text="Durchsuchen…", command=self.pt1_waehlen))
-        zeile("PT1 kopieren nach:", ttk.Combobox(f, textvariable=self.pt1_ziel, values=PT1_UNTERORDNER,
-                                                 state="readonly", width=20))
+        # --- PT1 / PT2
+        for kennung, (_, unterordner) in KOPIERBEREICHE.items():
+            ueberschrift(f"{kennung}-Unterlagen")
+            zeile(f"{kennung} von zentraler Ablage (optional):",
+                  ttk.Entry(f, textvariable=self.quellen[kennung], width=55),
+                  ttk.Button(f, text="Durchsuchen…",
+                             command=lambda k=kennung: self.quelle_waehlen(k)))
+            zeile(f"{kennung} kopieren nach:",
+                  ttk.Combobox(f, textvariable=self.unterziele[kennung], values=unterordner,
+                               state="readonly", width=20))
 
         self.vorschau = ttk.Label(f, foreground="gray", wraplength=650, justify="left")
         self.vorschau.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0)); r += 1
@@ -321,7 +343,9 @@ class App(tk.Tk):
         return " ".join(text.upper().split())
 
     def projektordnername(self):
-        return bereinigen(f"{self.psp.get()}_AZ{self.az.get()}_{self.beschr.get()}")
+        """Hauptordner: <Anlagenzustand>_<PSP>_<Projektbeschreibung>"""
+        teile = [self.az.get().strip(), self.psp.get().strip(), self.beschr.get().strip()]
+        return bereinigen("_".join(t for t in teile if t))
 
     def betriebsstelle_ermitteln(self):
         """
@@ -393,11 +417,12 @@ class App(tk.Tk):
         if d:
             self.basis.set(str(Path(d)))
 
-    def pt1_waehlen(self):
+    def quelle_waehlen(self, kennung):
         start = ZENTRALE_ABLAGE if Path(ZENTRALE_ABLAGE).exists() else None
-        d = filedialog.askdirectory(initialdir=start, title="PT1-Ordner auf zentraler Ablage wählen")
+        d = filedialog.askdirectory(initialdir=start,
+                                    title=f"{kennung}-Ordner auf zentraler Ablage wählen")
         if d:
-            self.pt1.set(d)
+            self.quellen[kennung].set(d)
 
     # ------------------------------------------------ Anlegen
     def anlegen(self):
@@ -405,7 +430,7 @@ class App(tk.Tk):
         ril = self.ril_wert()
         if not (ril and psp and az and beschr):
             messagebox.showerror("Fehlende Angaben",
-                                 "Bitte Betriebsstelle/RIL100-Kürzel, PSP-Element, Anlagenzustand und "
+                                 "Bitte Betriebsstelle/RIL100-Kürzel, Anlagenzustand, PSP-Element und "
                                  "Projektbeschreibung ausfüllen.")
             return
         bst, existiert, neu = self.betriebsstelle_ermitteln()
@@ -421,13 +446,24 @@ class App(tk.Tk):
                                  "manuell zusammenführen.")
             return
 
+        # Kopierquellen prüfen
+        quellen = {}
+        for kennung in KOPIERBEREICHE:
+            q = self.quellen[kennung].get().strip()
+            if q:
+                p = Path(q)
+                if not p.is_dir():
+                    messagebox.showerror("Fehler", f"{kennung}-Quelle nicht gefunden:\n{p}")
+                    return
+                quellen[kennung] = p
+
         warn = []
         if not existiert and not RIL_MUSTER.match(ril):
             warn.append(f"RIL100-Kürzel '{ril}' sieht ungewöhnlich aus (2–5 Zeichen erwartet).")
-        if not PSP_MUSTER.match(psp):
-            warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01.")
         if not AZ_MUSTER.match(az):
             warn.append(f"Anlagenzustand '{az}' ist nicht 4-stellig numerisch.")
+        if not PSP_MUSTER.match(psp):
+            warn.append(f"PSP-Element '{psp}' entspricht nicht dem Format M17525-01.")
         if not existiert:
             warn.append(f"Betriebsstellenordner wird neu angelegt:\n{bst}")
         if neu is not None:
@@ -457,11 +493,12 @@ class App(tk.Tk):
                 info.write_text(
                     f"Region:              {self.region.get()}\n"
                     f"Betriebsstelle:      {bst.name}\n"
-                    f"PSP-Element:         {psp}\n"
                     f"Anlagenzustand:      {az}\n"
+                    f"PSP-Element:         {psp}\n"
                     f"Projektbeschreibung: {beschr}\n"
                     f"Angelegt am:         {date.today():%d.%m.%Y}\n"
-                    f"PT1-Quelle:          {self.pt1.get() or '-'}\n",
+                    f"PT1-Quelle:          {quellen.get('PT1', '-')}\n"
+                    f"PT2-Quelle:          {quellen.get('PT2', '-')}\n",
                     encoding="utf-8",
                 )
         except OSError as e:
@@ -473,44 +510,50 @@ class App(tk.Tk):
         self.liste_aktualisieren()
         self.bst.set(self.anzeige(bst.name))
 
-        quelle = self.pt1.get().strip()
-        if not quelle:
+        if not quellen:
             self.status.config(text=f"Struktur angelegt: {wurzel}")
             messagebox.showinfo("Fertig", f"Struktur angelegt:\n{wurzel}")
             return
 
-        quelle = Path(quelle)
-        if not quelle.is_dir():
-            messagebox.showerror("Fehler", f"PT1-Quelle nicht gefunden:\n{quelle}")
-            return
-        ziel = wurzel / PT1_PFAD / self.pt1_ziel.get() / quelle.name
+        auftraege = [
+            (k, q, wurzel / KOPIERBEREICHE[k][0] / self.unterziele[k].get() / q.name)
+            for k, q in quellen.items()
+        ]
         self.btn.config(state="disabled")
         self.status.config(text="Ermittle Dateien …")
-        threading.Thread(target=ordner_kopieren, args=(quelle, ziel, self.q), daemon=True).start()
+        threading.Thread(target=ordner_kopieren, args=(auftraege, self.q), daemon=True).start()
         self.after(100, self.abfragen)
 
     def abfragen(self):
         try:
             while True:
                 m = self.q.get_nowait()
-                if m[0] == "max":
+                if m[0] == "start":
+                    self.status.config(text=f"{m[1]}: Ermittle Dateien …")
+                elif m[0] == "max":
                     self.balken.config(maximum=max(m[1], 1), value=0)
                 elif m[0] == "fortschritt":
-                    self.balken.config(value=m[1])
-                    self.status.config(text=f"Kopiere {m[1]}/{int(self.balken['maximum'])}: {m[2]}")
+                    _, i, kennung, name = m
+                    self.balken.config(value=i)
+                    self.status.config(
+                        text=f"{kennung}: Kopiere {i}/{int(self.balken['maximum'])}: {name}")
                 elif m[0] == "fertig":
-                    _, kop, ueb, fehler = m
                     self.btn.config(state="normal")
-                    txt = f"PT1 kopiert: {kop} Dateien, {ueb} bereits vorhanden (nicht überschrieben)."
-                    self.status.config(text=txt)
-                    if fehler:
-                        (self.wurzel / "PT1_Kopierfehler.txt").write_text("\n".join(fehler), encoding="utf-8")
-                        txt += f"\n\n{len(fehler)} Fehler – siehe PT1_Kopierfehler.txt"
+                    zeilen, alle_fehler = [], []
+                    for kennung, kop, ueb, fehler, abbruch in m[1]:
+                        if abbruch:
+                            zeilen.append(f"{kennung}: ABBRUCH – {abbruch}")
+                        else:
+                            zeilen.append(f"{kennung} kopiert: {kop} Dateien, {ueb} bereits "
+                                          "vorhanden (nicht überschrieben).")
+                        alle_fehler += [f"[{kennung}] {x}" for x in fehler]
+                    txt = "\n".join(zeilen)
+                    self.status.config(text=" | ".join(zeilen))
+                    if alle_fehler:
+                        (self.wurzel / "Kopierfehler.txt").write_text(
+                            "\n".join(alle_fehler), encoding="utf-8")
+                        txt += f"\n\n{len(alle_fehler)} Fehler – siehe Kopierfehler.txt"
                     messagebox.showinfo("Fertig", f"Struktur angelegt:\n{self.wurzel}\n\n{txt}")
-                    return
-                elif m[0] == "abbruch":
-                    self.btn.config(state="normal")
-                    messagebox.showerror("Abbruch", f"Kopieren fehlgeschlagen:\n{m[1]}")
                     return
         except queue.Empty:
             pass
