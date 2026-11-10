@@ -69,6 +69,22 @@ FFT_Schulungsunterlagen/
 
 ---
 
+## Projektstruktur-Tool
+
+`tools/Strukturanlegen_starten.bat` startet das Projektstruktur-Tool.
+Die anzulegenden Ordner stehen in `tools/Ordnerstruktur.txt` neben
+`Strukturanlegen.py`. Die Datei enthält eine ausführlich kommentierte Anleitung:
+Ein Ordner pro Zeile, zwei Leerzeichen je Unterordnerebene, Kommentarzeilen mit `#`.
+Zum Bearbeiten genügt ein Texteditor; als UTF-8 speichern.
+
+Mit **Struktur prüfen** lässt sich die Datei vorab kontrollieren. Vor jeder
+Projektneuanlage wird sie erneut vollständig eingelesen und geprüft. Fehler
+werden mit Dateipfad und bei fehlerhaften Ordnerzeilen mit Zeilennummer gemeldet,
+bevor Projektordner angelegt werden. Bestehende Projekte bleiben unverändert.
+Beim Weitergeben des Tools immer auch `Ordnerstruktur.txt` mitgeben
+(bei einer EXE neben die EXE legen). Die PT1-/PT2-Kopierziele bleiben fest;
+Details dazu stehen ebenfalls in der Strukturdatei.
+
 ## 🎯 Kernlernziele
 
 Nach dieser Schulung können Teilnehmende:

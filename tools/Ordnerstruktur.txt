@@ -1,0 +1,83 @@
+# ORDNERSTRUKTUR FUER NEUE PROJEKTE
+#
+# Diese Datei mit einem Texteditor (z. B. Windows-Editor/Notepad) bearbeiten.
+# Als einfache Textdatei in UTF-8 speichern, nicht als Word-Dokument.
+# Dateiname: Ordnerstruktur.txt, im selben Ordner wie Strukturanlegen.py
+# (bei einer EXE im selben Ordner wie die EXE). Nicht in .txt.txt umbenennen.
+#
+# SO FUNKTIONIERT ES:
+# - Jede Zeile ohne # am Anfang beschreibt genau einen Ordner.
+# - Ohne Einrueckung: Ordner direkt im neuen Projekt.
+# - Zwei Leerzeichen: Unterordner des letzten Ordners ohne Einrueckung.
+# - Vier Leerzeichen: noch eine Ebene tiefer; weitere Ebenen entsprechend.
+# - Immer genau ZWEI LEERZEICHEN je Ebene verwenden, niemals die Tab-Taste.
+# - Keine Ebene ueberspringen. Unterordner stehen direkt unter ihrem Elternordner.
+# - Leerzeilen und Kommentarzeilen (beginnend mit #) werden ignoriert.
+# - Kommentare immer auf eigene Zeilen schreiben, nicht hinter einen Ordnernamen.
+#
+# BEISPIEL (auskommentiert, wird NICHT angelegt):
+# Mein_Hauptordner
+#   Unterordner_A
+#     Noch_eine_Ebene
+#   Unterordner_B
+# Zweiter_Hauptordner
+#
+# ANPASSEN:
+# Unten Ordnernamen aendern, Zeilen hinzufuegen oder entfernen.
+# Beim Verschieben/Loeschen auch die eingerueckten Unterordner beachten.
+# Leerzeichen INNERHALB eines Namens sind erlaubt und bleiben erhalten.
+# Keine Laufwerke oder Pfade eintragen, sondern pro Zeile nur EINEN Namen.
+# Nicht erlaubt: < > : " / \ | ? *, Tabulatoren und andere Steuerzeichen.
+# Keine Namen "." oder "..", keine Punkte/Leerzeichen am Ende.
+# Reservierte Windows-Namen wie CON, NUL, AUX, PRN, COM1, LPT1 sind unzulaessig.
+# Ein Name darf maximal 255 UTF-16-Zeicheneinheiten lang sein.
+# Ordner unter demselben Elternordner duerfen nicht doppelt vorkommen,
+# auch nicht mit anderer Gross-/Kleinschreibung.
+# Im Projekt-Hauptordner sind Projektinfo.txt, .projektpflege.json und
+# .stw-pflege.lock fuer das Programm reserviert, also nicht eintragen.
+#
+# PRUEFEN UND ANWENDEN:
+# Im Tool auf "Struktur pruefen" klicken. Bei Fehlern nennt die Meldung
+# die Datei und bei fehlerhaften Ordnerzeilen auch die Zeilennummer.
+# Vor JEDEM neuen Projekt liest und prueft das Tool diese Datei erneut.
+# Eine fehlende, leere oder ungueltige Datei verhindert die Projektneuanlage.
+# Bereits vorhandene Projekte werden durch Aenderungen NICHT umgebaut.
+#
+# WICHTIG ZUM PT1-/PT2-DOWNLOAD:
+# Die Kopierziele bleiben 01_Eingangsunterlagen/PT1 bzw. PT2 und darunter
+# Stellwerk, ZX (bei PT1 auch sonstiges). Fehlende Kopierziele legt der
+# Download bei Bedarf an. Andere Namen hier aendern NICHT die Kopierziele.
+# Alte lokale Staende werden weder angelegt noch veraendert.
+#
+# AB HIER STEHEN DIE TATSAECHLICH ANZULEGENDEN ORDNER:
+00_Verwaltung
+  Auftrag
+  Schriftverkehr
+  Termine_Besprechungen
+01_Eingangsunterlagen
+  PT1
+    Stellwerk
+    ZX
+    sonstiges
+  PT2
+    Stellwerk
+    ZX
+02_Pruefgrundlagen
+  Regelwerke_Richtlinien
+  Normen
+  Pruefanweisungen_Checklisten
+  CAE_Freigaben
+  Konfigurationen
+03_Pruefung
+  01_Formale_Pruefung
+  02_Fachliche_Pruefung
+  03_Datenpruefung
+  04_Simulation_Test
+04_Pruefbemerkungen
+  Offen
+  Erledigt
+05_Ergebnisse
+  Pruefprotokolle
+  Pruefbericht
+  Freigabe
+99_Archiv
