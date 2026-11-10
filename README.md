@@ -80,10 +80,13 @@ Zum Bearbeiten genügt ein Texteditor; als UTF-8 speichern.
 Mit **Struktur prüfen** lässt sich die Datei vorab kontrollieren. Vor jeder
 Projektneuanlage wird sie erneut vollständig eingelesen und geprüft. Fehler
 werden mit Dateipfad und bei fehlerhaften Ordnerzeilen mit Zeilennummer gemeldet,
-bevor Projektordner angelegt werden. Bestehende Projekte bleiben unverändert.
+bevor Projektordner angelegt werden. Für PT1/PT2 müssen die fünf
+Zielkennungen in `Ordnerstruktur.txt` je einmal stehen; die Ordnernamen und
+ihre Position können angepasst werden. Die Zuordnung wird pro neuem Projekt
+gespeichert und beim Kopieren als vollständiges Ziel angezeigt. Bestehende
+Projekte bleiben unverändert.
 Beim Weitergeben des Tools immer auch `Ordnerstruktur.txt` mitgeben
-(bei einer EXE neben die EXE legen). Die PT1-/PT2-Kopierziele bleiben fest;
-Details dazu stehen ebenfalls in der Strukturdatei.
+(bei einer EXE neben die EXE legen); der Build kopiert die Datei automatisch.
 
 ## 🎯 Kernlernziele
 
