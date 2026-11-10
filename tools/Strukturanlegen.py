@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Stellwerksprojekte anlegen und PT1-/PT2-Staende getrennt nachpflegen.
+"""Stellwerksprojekte anlegen und PT1-/PT2-Unterlagen direkt übernehmen.
 
 Python 3.8+, nur Standardbibliothek. Start: python stw_pruefstruktur.py
 Bestehende Projekte aus der bisherigen Version werden ebenfalls unterstuetzt.
-Siehe ANLEITUNG.txt fuer Ablage, Wiederaufnahme und Dateisperren.
+Vorhandene Dateien werden nicht überschrieben; identische Dateien können übersprungen werden.
 """
 import hashlib
 import json
@@ -82,7 +82,6 @@ RESERVIERT = re.compile(
 AUSSCHLUSS = {"ALT", "NEU", "TEMP", "TMP", "ARCHIV", "VORLAGE",
               "VORLAGEN", "KOPIE", "TEST", "SONSTIGES"}
 META = ".projektpflege.json"
-JOURNALE = Path("00_Verwaltung", "Datenpflege")
 LOCK = ".stw-pflege.lock"
 LANG = "\\\\?\\"
 LANG_UNC = "\\\\?\\UNC\\"
@@ -284,7 +283,7 @@ def datei_kopieren(src, dst, size, mtime_ns, erwartet=None):
             raise PflegeFehler("Quelle während Kopie geändert: %s" % anzeige_pfad(src))
         sha = digest.hexdigest()
         if erwartet and sha != erwartet:
-            raise PflegeFehler("Quellinhalt passt nicht zum gespeicherten Stand: %s" % src)
+            raise PflegeFehler("Quellinhalt passt nicht zum erwarteten Inhalt: %s" % src)
         shutil.copystat(src, teil, follow_symlinks=False)
         if teil.stat().st_size != size or datei_hash(teil) != sha:
             raise PflegeFehler("Prüfsummenfehler beim Kopieren: %s" % anzeige_pfad(src))
@@ -500,237 +499,97 @@ class Auswahl:
 def relativer_pfad(text):
     if not isinstance(text, str) or not text:
         raise PflegeFehler("Ungültiger relativer Pfad im Kopierplan.")
-    # Journalpfade werden plattformneutral mit '/' gespeichert.
+    # Relative Pfade werden plattformneutral mit '/' verarbeitet.
     teile = text.split("/")
     if any(t in ("", ".", "..") or bereinigen(t, True) != t for t in teile):
         raise PflegeFehler("Ungültiger relativer Pfad im Kopierplan: %r" % text)
     return Path(*teile)
 
 
-def stand_id():
-    return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
-
-
-def stand_erfassen(projekt, auswahl, bezeichnung, abbruch, melden):
-    projekt = langer_pfad(projekt)
-    ident = stand_id()
-    plan = {"version": 1, "id": ident, "bezeichnung": bezeichnung.strip(),
-            "erstellt": datetime.now().isoformat(timespec="seconds"),
-            "status": "offen", "auswahl": [], "ordner": [], "dateien": [],
-            "fehler": [], "hinweise": []}
-    ziele = set()
-    ordnerziele = set()
-    for a in auswahl:
-        if a.kennung not in KOPIERBEREICHE or a.ziel not in KOPIERBEREICHE[a.kennung][1]:
-            raise PflegeFehler("Ungültiger Kopierbereich oder Ziel.")
-        root, source = langer_pfad(a.wurzel).absolute(), langer_pfad(a.quelle).absolute()
-        if source.relative_to(root) != a.relativ:
-            raise PflegeFehler("Auswahl passt nicht zum Quellordner.")
-        if ist_unterhalb(source, projekt) or ist_unterhalb(projekt, source):
-            raise PflegeFehler("Quelle und Projekt dürfen nicht ineinander liegen.")
-        for ancestor in (source,) + tuple(source.parents):
-            if ordner_verknuepfung(ancestor):
-                raise PflegeFehler("Quelle enthält eine Verknüpfung: %s" % ancestor)
-        base = (KOPIERBEREICHE[a.kennung][0] / "Staende" / ident / a.ziel
-                / bereinigen(zielname(root), True) / a.relativ)
-        relativer_pfad(base.as_posix())
-        plan["auswahl"].append({
-            "kennung": a.kennung, "wurzel": anzeige_pfad(root), "quelle": anzeige_pfad(source),
-            "nur_dateien": a.nur_dateien, "ziel": a.ziel,
-            "relativ": a.relativ.as_posix(),
-        })
-        def walk_error(exc):
-            raise exc
-        for current, dirs, names in os.walk(source, followlinks=False, onerror=walk_error):
-            if abbruch.is_set():
-                raise Abbruch()
-            relative = Path(current).relative_to(source)
-            destdir = base / relative
-            key = destdir.as_posix()
-            if key not in ordnerziele:
-                plan["ordner"].append(key)
-                ordnerziele.add(key)
-            allowed = []
-            for name in sorted(dirs, key=str.casefold):
-                p = Path(current) / name
-                if ordner_verknuepfung(p):
-                    plan["hinweise"].append("Verzeichnisverknüpfung ausgelassen: %s" % anzeige_pfad(p))
-                else:
-                    allowed.append(name)
-            dirs[:] = [] if a.nur_dateien else allowed
-            for name in sorted(names, key=str.casefold):
-                if abbruch.is_set():
-                    raise Abbruch()
-                src = Path(current) / name
-                if name.lower().endswith(".part") or ordner_verknuepfung(src):
-                    plan["hinweise"].append("Temporäre Datei/Verknüpfung ausgelassen: %s" % anzeige_pfad(src))
-                    continue
-                s = src.stat()
-                if not stat.S_ISREG(s.st_mode):
-                    raise PflegeFehler("Keine reguläre Quelldatei: %s" % anzeige_pfad(src))
-                target = (destdir / name).as_posix()
-                relativer_pfad(target)
-                if target.casefold() in ziele:
-                    raise PflegeFehler("Mehrfach belegtes Kopierziel: %s" % target)
-                ziele.add(target.casefold())
-                plan["dateien"].append({
-                    "quelle": anzeige_pfad(src), "ziel": target,
-                    "groesse": s.st_size, "mtime_ns": s.st_mtime_ns, "sha256": None,
-                    "fertig": False,
-                })
-                melden("Erfasse Dateien … %s" % len(plan["dateien"]), 0, 0)
-    if not plan["ordner"]:
-        raise PflegeFehler("Keine lesbaren Quellordner ausgewählt.")
-    return plan
-
-
-def stand_pruefen(plan):
-    if (plan.get("version") != 1 or not isinstance(plan.get("id"), str)
-            or not re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{8}", plan["id"])
-            or plan.get("status") not in {"offen", "abgebrochen", "fehler", "fertig"}
-            or not isinstance(plan.get("dateien"), list)
-            or not isinstance(plan.get("ordner"), list)
-            or not isinstance(plan.get("auswahl"), list)):
-        raise PflegeFehler("Ungültiger oder unbekannter Stand.")
-    prefixes = [rel / "Staende" / plan["id"] for rel, _, _ in KOPIERBEREICHE.values()]
-
-    def ziel_pruefen(text):
-        p = relativer_pfad(text)
-        if not any(base in p.parents for base in prefixes):
-            raise PflegeFehler("Kopierziel liegt nicht im eigenen Stand: %s" % text)
-
-    for p in plan["ordner"]:
-        ziel_pruefen(p)
-    targets = set()
-    for f in plan["dateien"]:
-        if not isinstance(f, dict) or not all(k in f for k in (
-                "quelle", "ziel", "groesse", "mtime_ns", "sha256", "fertig")):
-            raise PflegeFehler("Ungültiger Dateieintrag im Stand.")
-        ziel_pruefen(f["ziel"])
-        if (not isinstance(f["quelle"], str) or not langer_pfad(f["quelle"]).is_absolute()
-                or type(f["groesse"]) is not int or f["groesse"] < 0
-                or type(f["mtime_ns"]) is not int or type(f["fertig"]) is not bool
-                or (f["sha256"] is not None
-                    and not re.fullmatch("[0-9a-f]{64}", str(f["sha256"])))
-                or (f["fertig"] and not f["sha256"])):
-            raise PflegeFehler("Ungültige Dateidaten im Stand.")
-        key = f["ziel"].casefold()
-        if key in targets:
-            raise PflegeFehler("Doppelte Zieldatei im Stand.")
-        targets.add(key)
-    return plan
-
-
-def protokoll_schreiben(projekt, plan):
-    text = (
-        "Stand: {id}\nBezeichnung: {bezeichnung}\nErstellt: {erstellt}\n"
-        "Status: {status}\n".format(**plan)
-        + "Dateien: %s/%s abgeschlossen\n" % (
-            sum(f["fertig"] for f in plan["dateien"]), len(plan["dateien"]))
-        + "\nAuswahl:\n" + "\n".join(
-            "%s: %s -> %s%s" % (a["kennung"], a["quelle"], a["ziel"],
-                               " [nur Dateien]" if a["nur_dateien"] else "")
-            for a in plan["auswahl"])
-        + "\n\nFehler:\n" + ("\n".join(plan["fehler"]) or "-")
-        + "\n\nHinweise:\n" + ("\n".join(plan["hinweise"]) or "-") + "\n")
-    ziel = projekt / JOURNALE / (plan["id"] + ".txt")
-    with temporaere_datei(ziel) as teil:
-        teil.write_text(text, encoding="utf-8")
-        os.replace(teil, ziel)
-
-
-def stand_kopieren(projekt, plan, abbruch, melden):
-    stand_pruefen(plan)
-    journal = projekt / JOURNALE / (plan["id"] + ".json")
-    plan["fehler"] = []
-    plan["status"] = "offen"
-    json_schreiben(journal, plan)
-    try:
-        for rel in plan["ordner"]:
-            if abbruch.is_set():
-                raise Abbruch()
-            sicherer_ordner(projekt / relativer_pfad(rel))
-        total = len(plan["dateien"])
-        for i, f in enumerate(plan["dateien"], 1):
-            if abbruch.is_set():
-                raise Abbruch()
-            src = langer_pfad(f["quelle"])
-            dst = projekt / relativer_pfad(f["ziel"])
-            try:
-                sicherer_ordner(dst.parent)
-                if f["fertig"]:
-                    if (not dst.is_file() or ordner_verknuepfung(dst)
-                            or dst.stat().st_size != f["groesse"]
-                            or datei_hash(dst) != f["sha256"]):
-                        raise PflegeFehler("Abgeschlossene Datei fehlt oder wurde verändert: %s" % dst)
-                else:
-                    # Nach Absturz zwischen Veroeffentlichung und Journal-Update:
-                    # nur bei nachweislich gleichem Quellinhalt wieder aufnehmen.
-                    if os.path.lexists(dst) and not f["sha256"]:
-                        if ordner_verknuepfung(src):
-                            raise PflegeFehler("Quelle ist eine Verknüpfung: %s" % src)
-                        s = src.stat()
-                        if (s.st_size, s.st_mtime_ns) != (f["groesse"], f["mtime_ns"]):
-                            raise PflegeFehler("Quelle seit Erfassung geändert: %s" % src)
-                        f["sha256"] = datei_hash(src)
-                    sha, _ = datei_kopieren(src, dst, f["groesse"], f["mtime_ns"], f["sha256"])
-                    f["sha256"], f["fertig"] = sha, True
-            except (OSError, PflegeFehler) as exc:
-                f["fertig"] = False
-                plan["fehler"].append("%s: %s" % (anzeige_pfad(src), anzeige_pfad(str(exc))))
-            # Journalfehler sind fatal: ohne dauerhaftes Journal nicht weiterkopieren.
-            json_schreiben(journal, plan)
-            melden("Prüfe/kopiere %s/%s: %s" % (i, total, src.name), i, total)
-        plan["status"] = "fehler" if plan["fehler"] else "fertig"
-    except Abbruch:
-        plan["status"] = "abgebrochen"
-    except (OSError, PflegeFehler) as exc:
-        plan["status"] = "fehler"
-        plan["fehler"].append(anzeige_pfad(str(exc)))
-    except Exception:
-        plan["status"] = "fehler"
-        plan["fehler"].append("Unerwarteter Programmfehler:\n" + traceback.format_exc())
-        LOG.exception("Unerwarteter Fehler beim Kopieren")
-        raise
-    finally:
-        plan["aktualisiert"] = datetime.now().isoformat(timespec="seconds")
-        json_schreiben(journal, plan)
-        protokoll_schreiben(projekt, plan)
-    return plan
-
-
-def nachpflegen(projekt, auswahl, bezeichnung, abbruch, melden, fortsetzen=None):
+def unterlagen_kopieren(projekt, auswahl, abbruch, melden):
     projekt = langer_pfad(projekt).absolute()
     projekt_lesen(projekt)
-    sicherer_ordner(projekt)
+    ergebnis = {"kopiert": 0, "bereits_vorhanden": 0, "fehler": [], "hinweise": []}
     with sperre(projekt):
-        sicherer_ordner(projekt / JOURNALE)
-        if fortsetzen:
-            journal = langer_pfad(fortsetzen)
-            if journal.parent != projekt / JOURNALE or journal.suffix != ".json":
-                raise PflegeFehler("Stand gehört nicht zu diesem Projekt.")
-            plan = stand_pruefen(json_lesen(journal))
-            if journal.stem != plan["id"]:
-                raise PflegeFehler("Journalname und Stand-ID stimmen nicht überein.")
-            if plan["status"] == "fertig":
-                raise PflegeFehler("Dieser Stand ist abgeschlossen. Bitte neuen Stand anlegen.")
-        else:
-            plan = stand_erfassen(projekt, auswahl, bezeichnung, abbruch, melden)
-            json_schreiben(projekt / JOURNALE / (plan["id"] + ".json"), plan, neu=True)
-        return stand_kopieren(projekt, plan, abbruch, melden)
+        ordner = {}
+        dateien = []
+        ziele = set()
+        for a in auswahl:
+            if a.kennung not in KOPIERBEREICHE or a.ziel not in KOPIERBEREICHE[a.kennung][1]:
+                raise PflegeFehler("Ungültiger Kopierbereich oder Ziel.")
+            root, source = langer_pfad(a.wurzel).absolute(), langer_pfad(a.quelle).absolute()
+            try:
+                relativ = source.relative_to(root)
+            except ValueError as exc:
+                raise PflegeFehler("Auswahl passt nicht zum Quellordner.") from exc
+            if relativ != a.relativ:
+                raise PflegeFehler("Auswahl passt nicht zum Quellordner.")
+            if ist_unterhalb(source, projekt) or ist_unterhalb(projekt, source):
+                raise PflegeFehler("Quelle und Projekt dürfen nicht ineinander liegen.")
+            for ancestor in (source,) + tuple(source.parents):
+                if ordner_verknuepfung(ancestor):
+                    raise PflegeFehler("Quelle enthält eine Verknüpfung: %s" % ancestor)
+            base = (KOPIERBEREICHE[a.kennung][0] / a.ziel
+                    / bereinigen(zielname(root), True) / relativ)
+            relativer_pfad(base.as_posix())
 
+            def walk_error(exc):
+                raise exc
 
-def staende_lesen(projekt):
-    root = langer_pfad(projekt) / JOURNALE
-    if not root.exists():
-        return []
-    result = []
-    for path in sorted(root.glob("*.json"), reverse=True):
-        plan = stand_pruefen(json_lesen(path))
-        if path.stem != plan["id"]:
-            raise PflegeFehler("Journalname passt nicht zum Stand: %s" % path.name)
-        result.append((path, plan))
-    return result
+            for current, dirs, names in os.walk(source, followlinks=False, onerror=walk_error):
+                if abbruch.is_set():
+                    raise Abbruch()
+                relative = Path(current).relative_to(source)
+                destdir = base / relative
+                ordner[destdir.as_posix().casefold()] = destdir
+                allowed = []
+                for name in sorted(dirs, key=str.casefold):
+                    path = Path(current) / name
+                    if ordner_verknuepfung(path):
+                        ergebnis["hinweise"].append(
+                            "Verzeichnisverknüpfung ausgelassen: %s" % anzeige_pfad(path))
+                    else:
+                        allowed.append(name)
+                dirs[:] = [] if a.nur_dateien else allowed
+                for name in sorted(names, key=str.casefold):
+                    if abbruch.is_set():
+                        raise Abbruch()
+                    src = Path(current) / name
+                    if name.lower().endswith(".part") or ordner_verknuepfung(src):
+                        ergebnis["hinweise"].append(
+                            "Temporäre Datei/Verknüpfung ausgelassen: %s" % anzeige_pfad(src))
+                        continue
+                    info = src.stat()
+                    if not stat.S_ISREG(info.st_mode):
+                        raise PflegeFehler("Keine reguläre Quelldatei: %s" % anzeige_pfad(src))
+                    dst = projekt / destdir / name
+                    target = dst.relative_to(projekt).as_posix()
+                    relativer_pfad(target)
+                    key = target.casefold()
+                    if key in ziele:
+                        raise PflegeFehler("Mehrfach belegtes Kopierziel: %s" % target)
+                    ziele.add(key)
+                    dateien.append((src, dst, info.st_size, info.st_mtime_ns))
+
+        for destdir in ordner.values():
+            if abbruch.is_set():
+                raise Abbruch()
+            sicherer_ordner(projekt / relativer_pfad(destdir.as_posix()))
+
+        total = len(dateien)
+        for index, (src, dst, size, mtime_ns) in enumerate(dateien, 1):
+            if abbruch.is_set():
+                raise Abbruch()
+            try:
+                sicherer_ordner(dst.parent)
+                erwartet = datei_hash(src) if os.path.lexists(dst) else None
+                _, kopiert = datei_kopieren(src, dst, size, mtime_ns, erwartet)
+                ergebnis["kopiert" if kopiert else "bereits_vorhanden"] += 1
+            except (OSError, PflegeFehler) as exc:
+                ergebnis["fehler"].append(
+                    "%s: %s" % (anzeige_pfad(src), anzeige_pfad(str(exc))))
+            melden("Prüfe/kopiere %s/%s: %s" % (index, total, src.name), index, total)
+    return ergebnis
 
 
 class OrdnerAuswahl(ttk.Frame):
@@ -961,7 +820,6 @@ class App(tk.Tk):
         self.angezeigter_modus = "neu"
         self.such_nr = {"PT1": 0, "PT2": 0, "BST": 0, "PROJEKT": 0}
         self.such_jobs = {}
-        self.staende = {}
         self.auswahlen = {}
         self.modus = tk.StringVar(value="neu")
         self.basis = tk.StringVar(value=STANDARD_BASIS)
@@ -971,8 +829,6 @@ class App(tk.Tk):
         self.az = tk.StringVar()
         self.psp = tk.StringVar()
         self.beschreibung = tk.StringVar()
-        self.bezeichnung = tk.StringVar()
-        self.stand = tk.StringVar()
         self.projekttext = tk.StringVar(value="Noch kein Projekt geöffnet.")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -1036,19 +892,6 @@ class App(tk.Tk):
             selection.grid(sticky="ew")
             self.auswahlen[kennung] = selection
             row += 1
-        ttk.Label(f, text="Bezeichnung neuer Stand (z. B. Lieferung 2026-10-29):").grid(
-            row=row, column=0, sticky="w")
-        ttk.Entry(f, textvariable=self.bezeichnung).grid(row=row, column=1, sticky="ew", padx=6)
-        row += 1
-        ttk.Label(f, text="Unvollständigen Stand fortsetzen:").grid(row=row, column=0, sticky="w")
-        self.stand_box = ttk.Combobox(f, textvariable=self.stand, state="readonly")
-        self.stand_box.grid(row=row, column=1, sticky="ew", padx=6)
-        self.stand_box.bind("<<ComboboxSelected>>", lambda _: self.knopf())
-        ttk.Button(f, text="Stände aktualisieren", command=self.staende_laden).grid(row=row, column=2)
-        row += 1
-        self.historie = ttk.Label(f, text="Noch keine Stände geladen.", wraplength=900)
-        self.historie.grid(row=row, column=0, columnspan=3, sticky="w", pady=5)
-        row += 1
         self.balken = ttk.Progressbar(f)
         self.balken.grid(row=row, column=0, columnspan=3, sticky="ew", pady=5)
         row += 1
@@ -1217,8 +1060,8 @@ class App(tk.Tk):
 
     def vorschau_anzeigen(self):
         if self.modus.get() == "pflege":
-            text = ("Neue Stände werden getrennt unter PT1/PT2\\Staende abgelegt. "
-                    "Bestehende Unterlagen und Projektangaben bleiben unverändert.")
+            text = ("PT1- und PT2-Unterlagen werden direkt in die Projektstruktur kopiert. "
+                    "Es wird keine lokale Standverwaltung angelegt.")
         else:
             name = bereinigen("%s_%s_%s" % (
                 self.az.get().strip(), self.psp.get().strip().upper(), self.beschreibung.get().strip()))
@@ -1245,8 +1088,6 @@ class App(tk.Tk):
         self.projekt = None
         self.daten = None
         self.projekt_ladend = True
-        self.staende = {}
-        self.stand.set("")
         self.knopf()
         self.projekttext.set("Projekt wird geprüft …")
 
@@ -1258,18 +1099,16 @@ class App(tk.Tk):
                 self.projekttext.set("Kein Projekt geöffnet.")
                 messagebox.showerror("Projekt nicht lesbar", anzeige_pfad(str(error)))
                 return
-            daten, staende = result
-            self.projekt, self.daten = path, daten
+            self.projekt, self.daten = path, result
             self.projekttext.set(anzeige_pfad(path))
             if auswahl_leeren:
                 for kennung, widget in self.auswahlen.items():
                     self.auto_wert[kennung] = ""
                     widget.quelle.set("")
-            self.projektwerte_setzen(daten)
-            self.staende_anzeigen(staende)
+            self.projektwerte_setzen(result)
             self.knopf()
 
-        self.hintergrund(lambda: (projekt_lesen(path), staende_lesen(path)), fertig)
+        self.hintergrund(lambda: projekt_lesen(path), fertig)
 
     def projektwerte_setzen(self, daten):
         self.region.set(daten["region"])
@@ -1278,69 +1117,30 @@ class App(tk.Tk):
         self.psp.set(daten["psp"])
         self.beschreibung.set(daten["beschreibung"])
 
-    def staende_laden(self):
-        if not self.projekt or self.aktiv:
-            return
-        path = self.projekt
-        nr = self.such_nr["PROJEKT"]
-
-        def fertig(result, error):
-            if path != self.projekt or nr != self.such_nr["PROJEKT"]:
-                return
-            if error:
-                messagebox.showerror("Stände nicht lesbar", str(error))
-            else:
-                self.staende_anzeigen(result)
-
-        self.hintergrund(lambda: staende_lesen(path), fertig)
-
-    def staende_anzeigen(self, staende):
-        self.staende = {
-            "%s | %s | %s" % (p["id"], p["status"], p["bezeichnung"]): path
-            for path, p in staende if p["status"] != "fertig"
-        }
-        self.stand_box.configure(values=[""] + list(self.staende))
-        if self.stand.get() not in self.staende:
-            self.stand.set("")
-        lines = ["%s: %s – %s (%s/%s Dateien)" % (
-            p["id"], p["bezeichnung"], p["status"],
-            sum(f["fertig"] for f in p["dateien"]), len(p["dateien"])) for _, p in staende[:6]]
-        self.historie.configure(text="Letzte Stände:\n" + "\n".join(lines) if lines
-                               else "Noch keine getrennten Stände; bisherige Ablage bleibt erhalten.")
-        self.knopf()
-
     def knopf(self):
         if not hasattr(self, "btn"):
             return
-        resume = self.modus.get() == "pflege" and self.stand.get() in self.staende
         blocked = any(a.ausstehend or (a.quelle.get().strip() and not a.auswahl())
                       for a in self.auswahlen.values())
-        disabled = self.aktiv or (self.modus.get() == "pflege" and not self.projekt) or (
-            blocked and not resume)
+        disabled = self.aktiv or (self.modus.get() == "pflege" and not self.projekt) or blocked
         self.btn.configure(state="disabled" if disabled else "normal",
-                           text="Stand fortsetzen" if resume else
-                           "Neuen Stand übernehmen" if self.modus.get() == "pflege" else "Projekt anlegen")
+                           text="Unterlagen übernehmen" if self.modus.get() == "pflege"
+                           else "Projekt anlegen")
 
     def starten(self):
         if self.aktiv:
             return
         pflege = self.modus.get() == "pflege"
         projekt = self.projekt if pflege else None
-        fortsetzen = self.staende.get(self.stand.get()) if pflege else None
         auswahl = tuple(a for widget in self.auswahlen.values() for a in widget.auswahl())
-        if not fortsetzen and any(w.quelle.get().strip() and not w.auswahl()
-                                  for w in self.auswahlen.values()):
+        if any(w.quelle.get().strip() and not w.auswahl() for w in self.auswahlen.values()):
             messagebox.showwarning("Auswahl fehlt", "Quellen fertig laden und Ordner auswählen.")
             return
         if pflege and not projekt:
             messagebox.showwarning("Projekt fehlt", "Bitte zuerst ein bestehendes Projekt öffnen.")
             return
-        if pflege and not auswahl and not fortsetzen:
+        if pflege and not auswahl:
             messagebox.showwarning("Quelle fehlt", "Mindestens PT1 oder PT2 auswählen.")
-            return
-        bezeichnung = self.bezeichnung.get().strip()
-        if auswahl and not fortsetzen and not bezeichnung:
-            messagebox.showwarning("Bezeichnung fehlt", "Bitte eine Bezeichnung für den neuen Stand eingeben.")
             return
         args = (self.basis.get().strip(), self.region.get(), self.bst.get().strip(),
                 self.klarname.get().strip(), self.az.get().strip(),
@@ -1352,19 +1152,21 @@ class App(tk.Tk):
                                  "PSP (z. B. M17525-01) und Beschreibung prüfen.")
             return
         # Alle Werte vor dem modalen Dialog aufnehmen; keine spaeteren Tk-Zugriffe im Worker.
-        text = ("Gespeicherten Stand fortsetzen; aktuelle Quellenauswahl wird ignoriert.\n%s" % fortsetzen
-                if fortsetzen else
-                ("Neuer Stand: %s\n" % bezeichnung if auswahl else "Nur Projektstruktur anlegen.\n")
-                + "\n".join("%s: %s -> %s%s" % (
-                    a.kennung, anzeige_pfad(a.quelle), a.ziel,
-                    " [nur Dateien]" if a.nur_dateien else "") for a in auswahl))
+        text = (("Unterlagen direkt in die Projektstruktur kopieren:\n" +
+                 "\n".join("%s: %s -> %s%s" % (
+                     a.kennung, anzeige_pfad(a.quelle), a.ziel,
+                     " [nur Dateien]" if a.nur_dateien else "") for a in auswahl))
+                if auswahl else "Nur Projektstruktur anlegen.\n")
         if not pflege:
             text += "\n\nNeuanlage: vorhandene gleichnamige Projekte werden nicht zusammengeführt."
             if args[3]:
                 text += "\nEin Betriebsstellenordner ohne Klarname wird ggf. vervollständigt."
             if len(bereinigen(args[6])) > 40:
                 text += "\nHinweis: Beschreibung überschreitet die Empfehlung von 40 Zeichen."
-        text += "\n\nAlte Datenstände bleiben unverändert. Fortfahren?"
+        if auswahl:
+            text += ("\n\nEs wird keine lokale Standverwaltung angelegt. "
+                     "Vorhandene Dateien werden nicht überschrieben; identische Dateien werden übersprungen.")
+        text += "\n\nFortfahren?"
         if not messagebox.askyesno("Auftrag bestätigen", text):
             return
         if not pflege:
@@ -1392,9 +1194,8 @@ class App(tk.Tk):
             if ziel is None:
                 ziel = projekt_anlegen(*args)
                 self.q.put(("antwort", self.projekt_erstellt, ziel, None))
-            plan = (nachpflegen(ziel, auswahl, bezeichnung, self.abbruch, melden, fortsetzen)
-                    if auswahl or fortsetzen else None)
-            return ziel, plan
+            ergebnis = unterlagen_kopieren(ziel, auswahl, self.abbruch, melden) if auswahl else None
+            return ziel, ergebnis
 
         self.hintergrund(arbeit, self.fertig)
 
@@ -1415,29 +1216,30 @@ class App(tk.Tk):
             self.destroy()
             return
         if error:
-            text = ("Abgebrochen, bevor ein Stand angelegt wurde." if isinstance(error, Abbruch)
-                    else anzeige_pfad(str(error)))
+            text = ("Abgebrochen. Bereits übernommene Dateien bleiben im Projekt; "
+                    "identische Dateien werden beim erneuten Start übersprungen."
+                    if isinstance(error, Abbruch) else anzeige_pfad(str(error)))
             if self.projekt:
                 text += "\nProjekt bleibt erhalten: %s" % anzeige_pfad(self.projekt)
             self.status.configure(text=text)
             messagebox.showwarning("Abgebrochen" if isinstance(error, Abbruch) else "Fehler", text)
         else:
-            projekt, plan = result
+            projekt, ergebnis = result
             self.projekt = projekt
             self.modus.set("pflege")
             self.modus_wechseln()
-            text = "Projekt angelegt: %s" % anzeige_pfad(projekt)
-            if plan:
-                text = "Stand %s: %s; %s/%s Dateien abgeschlossen." % (
-                    plan["id"], plan["status"], sum(f["fertig"] for f in plan["dateien"]),
-                    len(plan["dateien"]))
-                text += "\nProtokoll: %s" % anzeige_pfad(projekt / JOURNALE / (plan["id"] + ".txt"))
-                if plan["status"] != "fertig":
-                    text += "\nDiesen Stand zum Fortsetzen in der Liste auswählen."
-                if plan["hinweise"]:
-                    text += "\n%s ausgelassene Verknüpfungen/temporäre Dateien; siehe Protokoll." % len(plan["hinweise"])
+            text = ("Projekt angelegt: " if not ergebnis else "Unterlagen übernommen: ")
+            text += anzeige_pfad(projekt)
+            if ergebnis:
+                text += ("\nKopiert: %s; bereits identisch vorhanden: %s; Fehler: %s" % (
+                    ergebnis["kopiert"], ergebnis["bereits_vorhanden"], len(ergebnis["fehler"])))
+                if ergebnis["fehler"]:
+                    text += "\n\nFehler:\n" + "\n".join(ergebnis["fehler"])
+                if ergebnis["hinweise"]:
+                    text += "\n\nHinweise: %s Verknüpfungen/temporäre Dateien ausgelassen." % (
+                        len(ergebnis["hinweise"]))
             self.status.configure(text=text)
-            dialog = messagebox.showwarning if plan and plan["status"] != "fertig" else messagebox.showinfo
+            dialog = messagebox.showwarning if ergebnis and ergebnis["fehler"] else messagebox.showinfo
             dialog("Ergebnis", text)
         if self.projekt:
             self.projekt_laden(self.projekt, auswahl_leeren=False)
@@ -1445,7 +1247,7 @@ class App(tk.Tk):
     def abbrechen(self):
         if self.aktiv and messagebox.askyesno(
                 "Abbrechen?", "Nach der laufenden Datei/Prüfsumme abbrechen? "
-                "Ein angefangener Stand bleibt zum Fortsetzen erhalten."):
+                "Bereits kopierte Dateien bleiben im Projekt."):
             self.abbruch.set()
             self.abbruch_btn.configure(state="disabled")
             self.status.configure(text="Abbruch angefordert – laufende Datei wird abgeschlossen …")
@@ -1455,7 +1257,7 @@ class App(tk.Tk):
             self.destroy()
         elif self.schliessen_ausstehend:
             if messagebox.askyesno("Sofort beenden?",
-                                  "Datei oder Journal können noch geschrieben werden. Sofort beenden?\n"
+                                  "Datei kann noch geschrieben werden. Sofort beenden?\n"
                                   "Die Sperrdatei muss dann ggf. manuell entfernt werden."):
                 self.destroy()
         elif messagebox.askyesno("Abbrechen und schließen?",
