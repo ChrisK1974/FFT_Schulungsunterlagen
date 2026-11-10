@@ -40,6 +40,22 @@ KOPIERBEREICHE = {
     "PT2": (Path("01_Eingangsunterlagen", "PT2"),
             ("Stellwerk", "ZX"), r"\\destgsfs10\IL90-Projekte-ro"),
 }
+KOPIERZIEL_KENNUNGEN = {
+    ("PT1", "Stellwerk"): "PT1_STELLWERK",
+    ("PT1", "ZX"): "PT1_ZX",
+    ("PT1", "sonstiges"): "PT1_SONSTIGES",
+    ("PT2", "Stellwerk"): "PT2_STELLWERK",
+    ("PT2", "ZX"): "PT2_ZX",
+}
+ERFORDERLICHE_KOPIERZIELE = frozenset(KOPIERZIEL_KENNUNGEN.values())
+GRUPPEN_KENNUNGEN = {"PT1", "PT2"}
+ALLE_STRUKTUR_KENNUNGEN = ERFORDERLICHE_KOPIERZIELE | GRUPPEN_KENNUNGEN
+LEGACY_KOPIERZIELE = {
+    KOPIERZIEL_KENNUNGEN[(kennung, ziel)]:
+        (KOPIERBEREICHE[kennung][0] / ziel).as_posix()
+    for kennung, (_, ziele, _) in KOPIERBEREICHE.items()
+    for ziel in ziele
+}
 PT1_UNTERORDNER = Path("001_PT1", "002_PT1 elektronisch")
 STRUKTURDATEI = (
     Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__)
@@ -99,6 +115,9 @@ def bereinigen(text, leerzeichen=False):
 def vorlage_parsen(text):
     result, stack = [], []
     gesehen = {}
+    kennungen = {}
+    kennungszeilen = {}
+    kopierziele = {}
     for nummer, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -109,7 +128,21 @@ def vorlage_parsen(text):
                 "Zeile %s: Ungültige Einrückung. Je Ebene genau zwei Leerzeichen "
                 "verwenden, keine Tabulatoren und keine Ebene überspringen." % nummer)
         name = line[indent:]
-        if (name in {".", ".."} or name != name.strip() or name.endswith(".")
+        marker = re.search(r"\[(PT[^\]]*)\]\s*$", name, re.I)
+        if marker:
+            kennung = marker.group(1).upper()
+            if kennung not in ALLE_STRUKTUR_KENNUNGEN:
+                raise PflegeFehler(
+                    "Zeile %s: Unbekannte PT-Kopierkennung [%s]. Erlaubt sind: %s." % (
+                        nummer, marker.group(1), ", ".join(sorted(ALLE_STRUKTUR_KENNUNGEN))))
+            name = name[:marker.start()].rstrip()
+        elif re.search(r"\[PT", name, re.I):
+            raise PflegeFehler(
+                "Zeile %s: PT-Kopierkennungen müssen am Ende des Ordnernamens "
+                "stehen, zum Beispiel 'Stellwerk [PT1_STELLWERK]'." % nummer)
+        else:
+            kennung = None
+        if (not name or name in {".", ".."} or name != name.strip() or name.endswith(".")
                 or UNGUELTIG.search(name) or RESERVIERT.match(name)
                 or len(name.encode("utf-16-le")) // 2 > 255):
             raise PflegeFehler(
@@ -128,9 +161,35 @@ def vorlage_parsen(text):
                     nummer, pfad.as_posix(), gesehen[key]))
         gesehen[key] = nummer
         result.append(pfad)
+        if kennung:
+            if kennung in kennungen:
+                raise PflegeFehler(
+                    "Zeile %s: Kopierkennung [%s] ist doppelt (bereits in Zeile %s)." % (
+                        nummer, kennung, kennungen[kennung]))
+            kennungen[kennung] = nummer
+            kennungszeilen[kennung] = nummer
+            if kennung in ERFORDERLICHE_KOPIERZIELE:
+                kopierziele[kennung] = pfad.as_posix()
     if not result:
         raise PflegeFehler("Die Struktur enthält keine Ordner, nur Leerzeilen oder Kommentare.")
-    return result
+    fehlend = sorted(ERFORDERLICHE_KOPIERZIELE - kopierziele.keys())
+    if fehlend:
+        raise PflegeFehler(
+            "Fehlende PT-Kopierkennungen: %s. Jede Kennung muss genau einmal "
+            "am Ende des zugehörigen Ordnernamens stehen." % ", ".join(
+                "[%s]" % kennung for kennung in fehlend))
+    for kennung, text in kopierziele.items():
+        pfad = Path(text)
+        for anderes, anderer_text in kopierziele.items():
+            if kennung >= anderes:
+                continue
+            anderer_pfad = Path(anderer_text)
+            if pfad == anderer_pfad or pfad in anderer_pfad.parents or anderer_pfad in pfad.parents:
+                raise PflegeFehler(
+                    "Kopierziele [%s] (Zeile %s) und [%s] (Zeile %s) überlappen. "
+                    "Die fünf Zielordner müssen voneinander getrennt sein." % (
+                        kennung, kennungszeilen[kennung], anderes, kennungszeilen[anderes]))
+    return result, kopierziele
 
 
 def struktur_laden():
@@ -383,6 +442,35 @@ def pt2_ordner_finden(region, ril):
     return sorted(matches, key=lambda p: (rank.get(p.name.casefold(), 2), p.name.casefold()))
 
 
+def kopierziele_pruefen(kopierziele):
+    if not isinstance(kopierziele, dict) or set(kopierziele) != ERFORDERLICHE_KOPIERZIELE:
+        raise PflegeFehler("Projektmetadaten enthalten keine vollständige PT-Kopierziel-Zuordnung.")
+    result = {}
+    pfade = set()
+    for kennung, text in kopierziele.items():
+        if not isinstance(text, str):
+            raise PflegeFehler("Ungültiger Pfad für PT-Kopierkennung [%s]." % kennung)
+        pfad = relativer_pfad(text)
+        normalisiert = pfad.as_posix()
+        if (normalisiert != text or normalisiert.casefold() in pfade
+                or any(part.endswith(".") or RESERVIERT.match(part)
+                       or len(part.encode("utf-16-le")) // 2 > 255 for part in pfad.parts)):
+            raise PflegeFehler("Ungültiger oder mehrfach verwendeter PT-Kopierzielpfad: %s" % text)
+        pfade.add(normalisiert.casefold())
+        result[kennung] = normalisiert
+    for kennung, text in result.items():
+        pfad = Path(text)
+        for anderes, anderer_text in result.items():
+            if kennung >= anderes:
+                continue
+            anderer_pfad = Path(anderer_text)
+            if pfad in anderer_pfad.parents or anderer_pfad in pfad.parents:
+                raise PflegeFehler(
+                    "Projektmetadaten enthalten überlappende PT-Kopierziele "
+                    "[%s] und [%s]." % (kennung, anderes))
+    return result
+
+
 def projekt_lesen(projekt):
     projekt = langer_pfad(projekt)
     if not projekt.is_dir() or ordner_verknuepfung(projekt):
@@ -392,6 +480,8 @@ def projekt_lesen(projekt):
         if daten.get("version") != 1 or not all(isinstance(daten.get(k), str) and daten[k]
                                                 for k in ("region", "bst", "az", "psp", "beschreibung")):
             raise PflegeFehler("Unbekannte oder unvollständige Projektmetadaten.")
+        daten["kopierziele"] = kopierziele_pruefen(
+            daten["kopierziele"] if "kopierziele" in daten else LEGACY_KOPIERZIELE)
         return daten
     info = projekt / "Projektinfo.txt"
     if not info.is_file():
@@ -405,6 +495,7 @@ def projekt_lesen(projekt):
             daten.setdefault(keys[key.strip()], value.strip())
     if not all(daten.get(key) for key in keys.values()):
         raise PflegeFehler("Projektinfo.txt enthält nicht alle Projektangaben.")
+    daten["kopierziele"] = dict(LEGACY_KOPIERZIELE)
     return daten
 
 
@@ -412,7 +503,7 @@ def projekt_anlegen(basis, region, auswahl, klar, az, psp, beschreibung):
     if not (os.fspath(basis).strip() and RIL_MUSTER.fullmatch(ril_aus_eingabe(auswahl))
             and AZ_MUSTER.fullmatch(az) and PSP_MUSTER.fullmatch(psp) and beschreibung.strip()):
         raise PflegeFehler("RIL100, Anlagenzustand, PSP oder Beschreibung ist ungültig.")
-    struktur = struktur_laden()
+    struktur, kopierziele = struktur_laden()
     regionpfad = sicherer_ordner(region_ordner(basis, region))
     with sperre(regionpfad):
         namen = betriebsstellen_auflisten(regionpfad)
@@ -454,6 +545,7 @@ def projekt_anlegen(basis, region, auswahl, klar, az, psp, beschreibung):
                 erstellt.append(p)
             daten = {"version": 1, "region": region, "bst": neuer_name, "az": az,
                      "psp": psp, "beschreibung": beschreibung,
+                     "kopierziele": kopierziele,
                      "angelegt": datetime.now().isoformat(timespec="seconds")}
             json_schreiben(projekt / META, daten, neu=True)
             dateien.append(projekt / META)
@@ -514,7 +606,7 @@ def relativer_pfad(text):
 
 def unterlagen_kopieren(projekt, auswahl, abbruch, melden):
     projekt = langer_pfad(projekt).absolute()
-    projekt_lesen(projekt)
+    daten = projekt_lesen(projekt)
     ergebnis = {"kopiert": 0, "bereits_vorhanden": 0, "fehler": [], "hinweise": []}
     with sperre(projekt):
         ordner = {}
@@ -535,7 +627,8 @@ def unterlagen_kopieren(projekt, auswahl, abbruch, melden):
             for ancestor in (source,) + tuple(source.parents):
                 if ordner_verknuepfung(ancestor):
                     raise PflegeFehler("Quelle enthält eine Verknüpfung: %s" % ancestor)
-            base = (KOPIERBEREICHE[a.kennung][0] / a.ziel
+            kopierkennung = KOPIERZIEL_KENNUNGEN[(a.kennung, a.ziel)]
+            base = (Path(daten["kopierziele"][kopierkennung])
                     / bereinigen(zielname(root), True) / relativ)
             relativer_pfad(base.as_posix())
 
@@ -927,14 +1020,15 @@ class App(tk.Tk):
 
     def struktur_pruefen(self):
         try:
-            struktur = struktur_laden()
+            struktur, kopierziele = struktur_laden()
         except PflegeFehler as exc:
             messagebox.showerror("Ungültige Ordnerstruktur", str(exc))
         else:
             messagebox.showinfo(
-                "Ordnerstruktur gültig", "%s\n\n%s Ordner erfolgreich geprüft. "
+                "Ordnerstruktur gültig", "%s\n\n%s Ordner und alle %s PT-Kopierziele "
+                "erfolgreich geprüft. "
                 "Die Datei wird vor jeder Projektneuanlage erneut eingelesen." % (
-                    STRUKTURDATEI, len(struktur)))
+                    STRUKTURDATEI, len(struktur), len(kopierziele)))
 
     def hintergrund(self, funktion, fertig):
         def arbeit():
@@ -1163,6 +1257,13 @@ class App(tk.Tk):
         if pflege and not auswahl:
             messagebox.showwarning("Quelle fehlt", "Mindestens PT1 oder PT2 auswählen.")
             return
+        kopierziele = (self.daten or {}).get("kopierziele")
+        if auswahl and kopierziele is None:
+            try:
+                _, kopierziele = struktur_laden()
+            except PflegeFehler as exc:
+                messagebox.showerror("Ungültige Ordnerstruktur", str(exc))
+                return
         args = (self.basis.get().strip(), self.region.get(), self.bst.get().strip(),
                 self.klarname.get().strip(), self.az.get().strip(),
                 self.psp.get().strip().upper(), self.beschreibung.get().strip())
@@ -1175,7 +1276,10 @@ class App(tk.Tk):
         # Alle Werte vor dem modalen Dialog aufnehmen; keine spaeteren Tk-Zugriffe im Worker.
         text = (("Unterlagen direkt in die Projektstruktur kopieren:\n" +
                  "\n".join("%s: %s -> %s%s" % (
-                     a.kennung, anzeige_pfad(a.quelle), a.ziel,
+                     a.kennung, anzeige_pfad(a.quelle),
+                     anzeige_pfad(
+                         Path(kopierziele[KOPIERZIEL_KENNUNGEN[(a.kennung, a.ziel)]])
+                         / bereinigen(zielname(a.wurzel), True) / a.relativ),
                      " [nur Dateien]" if a.nur_dateien else "") for a in auswahl))
                 if auswahl else "Nur Projektstruktur anlegen.\n")
         if not pflege:

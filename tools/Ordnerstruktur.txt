@@ -44,10 +44,35 @@
 # Bereits vorhandene Projekte werden durch Aenderungen NICHT umgebaut.
 #
 # WICHTIG ZUM PT1-/PT2-DOWNLOAD:
-# Die Kopierziele bleiben 01_Eingangsunterlagen/PT1 bzw. PT2 und darunter
-# Stellwerk, ZX (bei PT1 auch sonstiges). Fehlende Kopierziele legt der
-# Download bei Bedarf an. Andere Namen hier aendern NICHT die Kopierziele.
+# Die PT1-/PT2-Kopierziele werden durch Kennungen in eckigen Klammern
+# festgelegt. Die Kennung muss am ENDE des Ordnernamens stehen.
+# Die Kennung wird nicht Teil des angelegten Ordnernamens.
+# Alle fuenf Zielkennungen unten muessen genau einmal vorkommen:
+#   [PT1_STELLWERK]   PT1 -> Stellwerk
+#   [PT1_ZX]          PT1 -> ZX
+#   [PT1_SONSTIGES]   PT1 -> sonstiges
+#   [PT2_STELLWERK]   PT2 -> Stellwerk
+#   [PT2_ZX]          PT2 -> ZX
+# Namen und Position dieser Ordner duerfen geaendert werden. Der Download
+# folgt dann dem markierten Ordner, statt einen alten Standardpfad anzulegen.
+# [PT1] und [PT2] duerfen optional an PT-Hauptordner angehaengt werden. Diese
+# beiden Gruppenkennungen dienen nur der Lesbarkeit und sind keine Kopierziele.
+# Fehlende, doppelte oder unbekannte PT-Kennungen lassen die Strukturpruefung
+# fehlschlagen. Das Tool legt dann kein neues Projekt an.
+# Die tatsaechlichen Zielpfade werden beim Anlegen im Projekt gespeichert.
+# Eine spaetere Aenderung dieser Datei verschiebt keine bestehenden Projekte.
+# Beim Kopieren zeigt die Bestaetigung den vollstaendigen Zielordner.
 # Alte lokale Staende werden weder angelegt noch veraendert.
+#
+# BEISPIEL:
+# Unterlagen
+#   Planung [PT1]
+#     Stellwerksdaten [PT1_STELLWERK]
+#     Zuglenkung [PT1_ZX]
+#     Weitere_Daten [PT1_SONSTIGES]
+#   Projektierung [PT2]
+#     Stellwerksdaten [PT2_STELLWERK]
+#     Zuglenkung [PT2_ZX]
 #
 # AB HIER STEHEN DIE TATSAECHLICH ANZULEGENDEN ORDNER:
 00_Verwaltung
@@ -55,13 +80,13 @@
   Schriftverkehr
   Termine_Besprechungen
 01_Eingangsunterlagen
-  PT1
-    Stellwerk
-    ZX
-    sonstiges
-  PT2
-    Stellwerk
-    ZX
+  PT1 [PT1]
+    Stellwerk [PT1_STELLWERK]
+    ZX [PT1_ZX]
+    sonstiges [PT1_SONSTIGES]
+  PT2 [PT2]
+    Stellwerk [PT2_STELLWERK]
+    ZX [PT2_ZX]
 02_Pruefgrundlagen
   Regelwerke_Richtlinien
   Normen
