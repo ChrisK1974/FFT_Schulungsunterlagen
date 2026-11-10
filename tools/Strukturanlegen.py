@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Stellwerksprojekte anlegen und PT1-/PT2-Unterlagen direkt übernehmen.
 
-Python 3.8+, nur Standardbibliothek. Start: python stw_pruefstruktur.py
+Python 3.8+, nur Standardbibliothek. Start: Strukturanlegen_starten.bat
 Bestehende Projekte aus der bisherigen Version werden ebenfalls unterstuetzt.
 Vorhandene Dateien werden nicht überschrieben; identische Dateien können übersprungen werden.
+Die editierbare Ordnerstruktur steht in Ordnerstruktur.txt neben diesem Programm.
 """
 import hashlib
 import json
@@ -14,6 +15,7 @@ import queue
 import re
 import shutil
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -39,39 +41,9 @@ KOPIERBEREICHE = {
             ("Stellwerk", "ZX"), r"\\destgsfs10\IL90-Projekte-ro"),
 }
 PT1_UNTERORDNER = Path("001_PT1", "002_PT1 elektronisch")
-VORLAGE = """
-00_Verwaltung
-  Auftrag
-  Schriftverkehr
-  Termine_Besprechungen
-01_Eingangsunterlagen
-  PT1
-    Stellwerk
-    ZX
-    sonstiges
-  PT2
-    Stellwerk
-    ZX
-02_Pruefgrundlagen
-  Regelwerke_Richtlinien
-  Normen
-  Pruefanweisungen_Checklisten
-  CAE_Freigaben
-  Konfigurationen
-03_Pruefung
-  01_Formale_Pruefung
-  02_Fachliche_Pruefung
-  03_Datenpruefung
-  04_Simulation_Test
-04_Pruefbemerkungen
-  Offen
-  Erledigt
-05_Ergebnisse
-  Pruefprotokolle
-  Pruefbericht
-  Freigabe
-99_Archiv
-"""
+STRUKTURDATEI = (
+    Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__)
+).resolve().parent / "Ordnerstruktur.txt"
 PSP_MUSTER = re.compile(r"[A-Z]\d{5}-\d{2}[A-Z]?\Z", re.ASCII)
 AZ_MUSTER = re.compile(r"\d{4}\Z", re.ASCII)
 RIL_MUSTER = re.compile(r"[A-ZÄÖÜ][A-ZÄÖÜ0-9 ]{1,4}\Z")
@@ -126,16 +98,49 @@ def bereinigen(text, leerzeichen=False):
 
 def vorlage_parsen(text):
     result, stack = [], []
+    gesehen = {}
     for nummer, line in enumerate(text.splitlines(), 1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip(" "))
         depth = indent // 2
         if "\t" in line or indent % 2 or depth > len(stack):
-            raise PflegeFehler("Ungültige Einrückung in Vorlage, Zeile %s." % nummer)
-        stack = stack[:depth] + [bereinigen(line)]
-        result.append(Path(*stack))
+            raise PflegeFehler(
+                "Zeile %s: Ungültige Einrückung. Je Ebene genau zwei Leerzeichen "
+                "verwenden, keine Tabulatoren und keine Ebene überspringen." % nummer)
+        name = line[indent:]
+        if (name in {".", ".."} or name != name.strip() or name.endswith(".")
+                or UNGUELTIG.search(name) or RESERVIERT.match(name)
+                or len(name.encode("utf-16-le")) // 2 > 255):
+            raise PflegeFehler(
+                "Zeile %s: Ungültiger Ordnername %r. Keine Pfade, reservierten Namen "
+                "oder abschließenden Leerzeichen/Punkte verwenden (maximal 255 Zeichen)." % (
+                    nummer, name))
+        if depth == 0 and name.casefold() in {META.casefold(), LOCK.casefold(), "projektinfo.txt"}:
+            raise PflegeFehler("Zeile %s: %r ist für eine Programmdatei reserviert." % (nummer, name))
+        stack = stack[:depth] + [name]
+        pfad = Path(*stack)
+        key = pfad.as_posix().casefold()
+        if key in gesehen:
+            raise PflegeFehler(
+                "Zeile %s: Ordner %r ist doppelt (bereits in Zeile %s). "
+                "Groß-/Kleinschreibung unterscheidet keine Ordner." % (
+                    nummer, pfad.as_posix(), gesehen[key]))
+        gesehen[key] = nummer
+        result.append(pfad)
+    if not result:
+        raise PflegeFehler("Die Struktur enthält keine Ordner, nur Leerzeilen oder Kommentare.")
     return result
+
+
+def struktur_laden():
+    try:
+        return vorlage_parsen(STRUKTURDATEI.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, PflegeFehler) as exc:
+        raise PflegeFehler(
+            "Strukturdatei kann nicht verwendet werden:\n%s\n\n%s\n\n"
+            "Bitte die Datei im Texteditor korrigieren und als UTF-8 speichern. "
+            "Es wurde keine neue Projektstruktur angelegt." % (STRUKTURDATEI, exc)) from exc
 
 
 def ordner_verknuepfung(pfad):
@@ -407,6 +412,7 @@ def projekt_anlegen(basis, region, auswahl, klar, az, psp, beschreibung):
     if not (os.fspath(basis).strip() and RIL_MUSTER.fullmatch(ril_aus_eingabe(auswahl))
             and AZ_MUSTER.fullmatch(az) and PSP_MUSTER.fullmatch(psp) and beschreibung.strip()):
         raise PflegeFehler("RIL100, Anlagenzustand, PSP oder Beschreibung ist ungültig.")
+    struktur = struktur_laden()
     regionpfad = sicherer_ordner(region_ordner(basis, region))
     with sperre(regionpfad):
         namen = betriebsstellen_auflisten(regionpfad)
@@ -442,7 +448,7 @@ def projekt_anlegen(basis, region, auswahl, klar, az, psp, beschreibung):
                     "Projekt existiert bereits: %s\nÜber 'Bestehendes Projekt' öffnen; "
                     "Neuanlage führt keine Projekte zusammen." % anzeige_pfad(projekt)) from exc
             erstellt.append(projekt)
-            for rel in vorlage_parsen(VORLAGE):
+            for rel in struktur:
                 p = projekt / rel
                 p.mkdir()
                 erstellt.append(p)
@@ -884,6 +890,10 @@ class App(tk.Tk):
         self.vorschau = ttk.Label(f, wraplength=900, foreground="gray")
         self.vorschau.grid(row=row, column=0, columnspan=3, sticky="w", pady=6)
         row += 1
+        ttk.Label(f, text="Ordnerstruktur: %s" % STRUKTURDATEI, wraplength=650).grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=4)
+        ttk.Button(f, text="Struktur prüfen", command=self.struktur_pruefen).grid(row=row, column=2)
+        row += 1
         for kennung in KOPIERBEREICHE:
             box = ttk.LabelFrame(f, text="%s-Unterlagen (optional)" % kennung, padding=6)
             box.grid(row=row, column=0, columnspan=3, sticky="ew", pady=5)
@@ -914,6 +924,17 @@ class App(tk.Tk):
         self.after(80, self.abfragen)
         self.bst_planen()
         self.modus_wechseln()
+
+    def struktur_pruefen(self):
+        try:
+            struktur = struktur_laden()
+        except PflegeFehler as exc:
+            messagebox.showerror("Ungültige Ordnerstruktur", str(exc))
+        else:
+            messagebox.showinfo(
+                "Ordnerstruktur gültig", "%s\n\n%s Ordner erfolgreich geprüft. "
+                "Die Datei wird vor jeder Projektneuanlage erneut eingelesen." % (
+                    STRUKTURDATEI, len(struktur)))
 
     def hintergrund(self, funktion, fertig):
         def arbeit():
